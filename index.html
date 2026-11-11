@@ -44,6 +44,7 @@
   #caption .sub { margin-top:10px; font:700 clamp(13px,2vw,20px) system-ui; color:#e5e7eb; text-shadow:0 2px 10px rgba(0,0,0,.8); }
   body.clean .panel { display:none !important; }
   #loading { position:absolute; inset:0; display:grid; place-items:center; font:700 18px system-ui; color:var(--mut); }
+  @media (min-width: 761px) and (max-width: 1200px) { #top { top:112px; gap:10px; max-width:calc(100vw - 260px); } #btns { max-width:calc(100vw - 24px); } }
   @media (max-width: 760px) { #agents { display:none; } #log { max-height:30vh; overflow:hidden; } #top { gap:10px; flex-wrap:wrap; max-width:calc(100vw - 24px); top:auto; bottom:calc(30vh + 24px); padding:6px 10px; } #top .stat span { font-size:13px; } }
   @media (max-width: 760px) and (min-height: 600px) { #top { bottom:auto; top:100px; } }
 </style>
@@ -61,6 +62,7 @@
 <div id="top" class="panel">
   <div id="brand"></div>
   <div id="clock">09:00</div>
+  <div class="stat">FPS<span id="sFps">—</span></div>
   <div class="stat">Agentlar<span id="sAgents">0</span></div>
   <div class="stat">Tool calls<span id="sTools">0</span></div>
   <div class="stat">Bajarildi<span id="sDone">0</span></div>
@@ -72,6 +74,7 @@
   <button data-mode="walk">Ichida yurish<kbd>2</kbd></button>
   <button data-mode="follow">Kuzatish<kbd>3</kbd></button>
   <button data-mode="tour">Kino<kbd>4</kbd></button>
+  <button id="bQuality" title="Past / O‘rta / Yuqori">Sifat: O‘rta<kbd>Q</kbd></button>
   <button id="bNight">Kun / Tun<kbd>N</kbd></button>
   <button id="bLabels" class="on">Ismlar<kbd>L</kbd></button>
   <button id="bSpeed">Tezlik 1x<kbd>S</kbd></button>

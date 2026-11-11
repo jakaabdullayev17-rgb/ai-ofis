@@ -1,5 +1,22 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+
+// Q: past / o'rta / yuqori. Simulyatsiya tezligi sifatga bog'liq emas.
+const QUALITY = [
+  { name: 'Past', dpr: 1, pixels: 1100000, shadow: 1024, bloom: false, lights: false, shadowHz: 20 },
+  { name: "O'rta", dpr: 1.25, pixels: 2300000, shadow: 2048, bloom: true, lights: true, shadowHz: 30 },
+  { name: 'Yuqori', dpr: 2, pixels: 5000000, shadow: 4096, bloom: true, lights: true, shadowHz: 60 },
+];
+const qualityParam = new URLSearchParams(location.search).get('quality');
+let qualityIndex = ({ low: 0, medium: 1, high: 2 })[qualityParam] ?? 1;
+let renderScale = 1, shadowElapsed = 1, fpsTime = 0, fpsFrames = 0;
 
 // Ofis nomini URL orqali o'zgartirish mumkin: index.html?nom=Mening%20Ofisim
 const OFFICE_NAME = (new URLSearchParams(location.search).get('nom') || 'AI OFIS').toUpperCase();
@@ -14,7 +31,7 @@ const angLerp = (a, b, t) => { let d = ((b - a + Math.PI) % (Math.PI * 2) + Math
 const matCache = new Map();
 function mat(color, o = {}) {
   const k = color + '|' + JSON.stringify(o);
-  if (!matCache.has(k)) matCache.set(k, new THREE.MeshStandardMaterial({ color, roughness: 0.75, metalness: 0.05, ...o }));
+  if (!matCache.has(k)) matCache.set(k, new THREE.MeshStandardMaterial({ color, roughness: 0.75, metalness: 0, ...o }));
   return matCache.get(k);
 }
 const geoCache = new Map();
@@ -45,10 +62,82 @@ function canvasTex(w, h, draw) {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
   t.userData = { canvas: c, ctx }; return t;
 }
+// Deterministik teksturalar: tashqi rasm yoki model yuklanmaydi.
+const surfaces = new Map();
+function surface(kind, color, repeat = 1) {
+  const key = `${kind}:${color}:${repeat}`;
+  if (surfaces.has(key)) return surfaces.get(key);
+  let seed = 137;
+  const noise = () => { seed = (1664525 * seed + 1013904223) >>> 0; return seed / 4294967296; };
+  const tex = canvasTex(256, 256, (ctx) => {
+    ctx.fillStyle = '#b8b8b8'; ctx.fillRect(0, 0, 256, 256);
+    if (kind === 'wood') {
+      for (let y = 0; y < 256; y++) {
+        const v = 145 + Math.round(noise() * 45);
+        ctx.strokeStyle = `rgb(${v},${v},${v})`; ctx.beginPath();
+        for (let x = 0; x <= 256; x += 8) {
+          const yy = y + Math.sin(x * 0.035 + y * 0.12) * 1.6;
+          if (!x) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+        }
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#777'; ctx.fillRect(0, 0, 256, 2);
+      ctx.fillRect(0, 128, 256, 2); ctx.fillRect(0, 0, 2, 128); ctx.fillRect(126, 128, 2, 128);
+    } else {
+      for (let i = 0; i < 18000; i++) {
+        const v = Math.round(155 + noise() * 65);
+        ctx.fillStyle = `rgb(${v},${v},${v})`;
+        ctx.fillRect(noise() * 256, noise() * 256, kind === 'fabric' ? 2 : 1, 1);
+      }
+      if (kind === 'fabric') {
+        ctx.fillStyle = 'rgba(50,50,50,.15)';
+        for (let x = 0; x < 256; x += 4) ctx.fillRect(x, 0, 1, 256);
+      }
+    }
+  });
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(repeat, repeat);
+  const bump = tex.clone(); bump.colorSpace = THREE.NoColorSpace; bump.needsUpdate = true;
+  const material = new THREE.MeshStandardMaterial({ color, map: tex, bumpMap: bump,
+    bumpScale: kind === 'wood' ? 0.012 : 0.007,
+    roughness: kind === 'wood' ? 0.48 : kind === 'fabric' ? 0.94 : 0.87,
+    metalness: 0, envMapIntensity: 0.45 });
+  material.userData.procedural = true; surfaces.set(key, material); return material;
+}
+function oval(parent, rx, ry, rz, material, x, y, z) {
+  if (!geoCache.has('oval')) geoCache.set('oval', new THREE.SphereGeometry(1, 16, 12));
+  const mesh = new THREE.Mesh(geoCache.get('oval'), material.isMaterial ? material : mat(material, { roughness: 0.58, metalness: 0 }));
+  mesh.scale.set(rx, ry, rz); mesh.position.set(x, y, z);
+  mesh.castShadow = true; mesh.receiveShadow = true; parent.add(mesh); return mesh;
+}
+// Yarim shaffof kontakt soya — SSAO emas, arzon AO imitatsiyasi.
+let contactMaterial;
+function contactShadow(parent, x, z, w, d, y = 0.067) {
+  if (!contactMaterial) {
+    const tex = canvasTex(64, 64, (c) => {
+      const g = c.createRadialGradient(32, 32, 2, 32, 32, 32);
+      g.addColorStop(0, 'rgba(12,18,28,.30)'); g.addColorStop(.5, 'rgba(12,18,28,.16)'); g.addColorStop(1, 'rgba(12,18,28,0)');
+      c.fillStyle = g; c.fillRect(0, 0, 64, 64);
+    });
+    contactMaterial = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, toneMapped: false });
+    geoCache.set('contact', new THREE.PlaneGeometry(1, 1));
+  }
+  const mesh = new THREE.Mesh(geoCache.get('contact'), contactMaterial);
+  mesh.rotation.x = -Math.PI / 2; mesh.position.set(x, y, z); mesh.scale.set(w, d, 1);
+  parent.add(mesh); return mesh;
+}
+function mug(parent, x, y, z, color = 0xf0eee8) {
+  const g = new THREE.Group(); g.position.set(x, y, z); parent.add(g);
+  cyl(g, .048, .042, .105, mat(color, { roughness: .25 }), 0, 0, 0, 12);
+  cyl(g, .039, .039, .004, 0x382217, 0, .053, 0, 12);
+  if (!geoCache.has('mugHandle')) geoCache.set('mugHandle', new THREE.TorusGeometry(.032, .009, 6, 12));
+  const handle = new THREE.Mesh(geoCache.get('mugHandle'), mat(color, { roughness: .25 }));
+  handle.position.x = .052; g.add(handle); return g;
+}
+
 function fitFont(ctx, text, maxW, size, weight = 'bold', fam = 'system-ui, sans-serif') {
   do { ctx.font = `${weight} ${size}px ${fam}`; size -= 2; } while (ctx.measureText(text).width > maxW && size > 8);
 }
-function screenMat(tex, intensity = 0.9) {
+function screenMat(tex, intensity = 1.25) {
   return new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: intensity, roughness: 0.4 });
 }
 function sign(parent, text, w, h, x, y, z, ry, { bg = '#111827', fg = '#ffffff', accent = null, sub = null, glow = 0.35 } = {}) {
@@ -65,13 +154,23 @@ function sign(parent, text, w, h, x, y, z, ry, { bg = '#111827', fg = '#ffffff',
   m.position.set(x, y, z); m.rotation.y = ry; parent.add(m); return m;
 }
 
+// Agentlar uchun umumiy geometriya keshi: animatsiya bo'g'inlari o'zgarmaydi.
+function softBox(parent, w, h, d, m, x, y, z, ry = 0, shadow = true) {
+  const key = `soft:${w},${h},${d}`;
+  if (!geoCache.has(key)) geoCache.set(key, new RoundedBoxGeometry(w, h, d, 2, Math.min(w, h, d) * 0.19));
+  const mesh = new THREE.Mesh(geoCache.get(key), m && m.isMaterial ? m : mat(m, { roughness: 0.62, metalness: 0 }));
+  mesh.position.set(x, y, z); mesh.rotation.y = ry;
+  mesh.castShadow = shadow; mesh.receiveShadow = true; parent.add(mesh); return mesh;
+}
+
 // ---------------------------------------------------------------- sahna
 const canvas = document.getElementById('c');
 const stage = document.getElementById('stage');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setPixelRatio(renderScale);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
@@ -92,12 +191,44 @@ orbit.minDistance = 3; orbit.maxDistance = 90;
 const hemi = new THREE.HemisphereLight(0xe3ecff, 0x40362a, 0.7);
 scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff0d8, 2.4);
-sun.position.set(22, 40, 18);
+sun.position.set(22, 28, 18);
 sun.castShadow = true;
-sun.shadow.mapSize.set(4096, 4096);
+sun.shadow.mapSize.set(QUALITY[qualityIndex].shadow, QUALITY[qualityIndex].shadow);
 Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 24, bottom: -24, near: 5, far: 100 });
 sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.02;
 scene.add(sun);
+// Faqat quyosh soya chizadi; to'ldiruvchi chiroq qo'shimcha shadow pass talab qilmaydi.
+const rim = new THREE.DirectionalLight(0xa9d9ff, 0.65);
+rim.position.set(-18, 16, -20); scene.add(rim);
+let composer = null, bloom = null;
+function ensureComposer() {
+  if (composer) return;
+  composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.22, 0.45, 1.15);
+  composer.addPass(bloom);
+  // Tone mapping va sRGB konversiyasi oxirida, faqat bir marta.
+  composer.addPass(new OutputPass());
+}
+
+
+// IBL akslari: RoomEnvironment PMREM, bir marta hisoblanadi.
+const pmrem = new THREE.PMREMGenerator(renderer);
+const roomEnvironment = new RoomEnvironment();
+const environmentTarget = pmrem.fromScene(roomEnvironment, 0.04);
+scene.environment = environmentTarget.texture;
+roomEnvironment.dispose(); pmrem.dispose();
+// Osmon gumbazi kamera bilan birga siljiydi, fog ufqni yumshatadi.
+const skyUniforms = { top: { value: new THREE.Color(0x6ba5dd) }, bottom: { value: new THREE.Color(0xdde8ed) } };
+const sky = new THREE.Mesh(new THREE.SphereGeometry(180, 24, 12), new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false, uniforms: skyUniforms,
+  vertexShader: 'varying vec3 vDir; void main(){vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+  fragmentShader: 'uniform vec3 top; uniform vec3 bottom; varying vec3 vDir; void main(){float h=smoothstep(-0.12,0.8,normalize(vDir).y); gl_FragColor=vec4(mix(bottom,top,h),1.0); \n #include <tonemapping_fragment> \n #include <colorspace_fragment> }'
+}));
+sky.frustumCulled = false; scene.add(sky);
+const skyDayTop = new THREE.Color(0x6ba5dd), skyDayBottom = new THREE.Color(0xdde8ed);
+const skyNightTop = new THREE.Color(0x020511), skyNightBottom = new THREE.Color(0x101b30);
+const streetLights = [];
 
 // ---------------------------------------------------------------- navigatsiya to'ri (A* uchun)
 const CELL = 0.5, GX0 = -20, GZ0 = -14, GW = 80, GH = 56;
@@ -208,13 +339,15 @@ const office = new THREE.Group(); scene.add(office);
     cyl(scene, 0.05, 0.07, 4, 0x374151, x, 2, 21.2, 8);
     const bulb = box(scene, 0.5, 0.12, 0.3, mat(0xfff3c4, { emissive: 0xffd27a, emissiveIntensity: 0 }), x, 4, 21.0);
     streetLamps.push(bulb);
+    const light = new THREE.PointLight(0xffcf87, 0, 11, 2);
+    light.position.set(x, 3.8, 21); scene.add(light); streetLights.push(light);
   }
 }
 
 // pollar
 for (const k in ROOMS) {
   const r = ROOMS[k];
-  box(office, r.x2 - r.x1, 0.06, r.z2 - r.z1, mat(r.floor, { roughness: 0.85 }), (r.x1 + r.x2) / 2, 0.03, (r.z1 + r.z2) / 2, 0, false);
+  box(office, r.x2 - r.x1, 0.06, r.z2 - r.z1, surface(['work', 'lounge', 'meeting'].includes(k) ? 'wood' : 'concrete', r.floor, 4), (r.x1 + r.x2) / 2, 0.03, (r.z1 + r.z2) / 2, 0, false);
 }
 box(office, 40.6, 0.3, 28.6, 0x9a958c, 0, -0.14, 0, 0, false); // poydevor
 
@@ -231,10 +364,10 @@ const ceiling = new THREE.Group(); office.add(ceiling);
 
 // ---------------------------------------------------------------- devorlar
 const WALL_H = 3.0;
-const wallMat = mat(0xefebe5, { roughness: 0.9 });
-const outerMat = mat(0xd9d2c6, { roughness: 0.9 });
-const glassMat = new THREE.MeshStandardMaterial({ color: 0xa9d4ef, transparent: true, opacity: 0.22, roughness: 0.05, metalness: 0.1, depthWrite: false });
-const frameMat = mat(0x2b2f36, { metalness: 0.4, roughness: 0.4 });
+const wallMat = surface('concrete', 0xefebe5, 2);
+const outerMat = surface('concrete', 0xd9d2c6, 2);
+const glassMat = new THREE.MeshStandardMaterial({ color: 0xa9d4ef, transparent: true, opacity: 0.18, roughness: 0.08, metalness: 0.0, envMapIntensity: 0.85, depthWrite: false });
+const frameMat = mat(0x2b2f36, { metalness: 0.8, roughness: 0.28 });
 function wall(x1, z1, x2, z2, gaps = [], type = 'solid') {
   const horiz = z1 === z2, a0 = horiz ? Math.min(x1, x2) : Math.min(z1, z2), a1 = horiz ? Math.max(x1, x2) : Math.max(z1, z2);
   const segs = []; let s = a0;
@@ -329,18 +462,18 @@ const mkSpot = (x, z, face, pose = 'stand', seatY = 0.48) => ({ x, z, face, pose
 
 function officeChair(parent, x, z, ry, color = 0x1f2937) {
   const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = ry; parent.add(g);
-  box(g, 0.5, 0.08, 0.5, color, 0, 0.46, 0);
-  box(g, 0.48, 0.55, 0.07, color, 0, 0.8, -0.24);
+  softBox(g, 0.5, 0.08, 0.5, surface('fabric', color), 0, 0.46, 0);
+  softBox(g, 0.48, 0.55, 0.07, surface('fabric', color), 0, 0.8, -0.24);
   cyl(g, 0.03, 0.03, 0.36, 0x6b7280, 0, 0.26, 0, 8);
-  box(g, 0.5, 0.04, 0.08, 0x374151, 0, 0.06, 0); box(g, 0.08, 0.04, 0.5, 0x374151, 0, 0.06, 0);
+  softBox(g, 0.5, 0.04, 0.08, 0x374151, 0, 0.06, 0); softBox(g, 0.08, 0.04, 0.5, 0x374151, 0, 0.06, 0);
   return g;
 }
 // Stol: guruh boshlang'ichi = stul o'rni; odam +z tomonga (monitorga) qaraydi
 function desk(x, z, ry, screen = SCREENS.code, { wide = false, color = 0xe9e4dc, chair = 0x1f2937, monitors = 1 } = {}) {
   const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = ry; office.add(g);
   const W = wide ? 2.2 : 1.5;
-  const top = box(g, W, 0.05, 0.75, color, 0, 0.74, 0.65);
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(g, 0.05, 0.72, 0.05, 0x9ca3af, sx * (W / 2 - 0.06), 0.36, 0.65 + sz * 0.31);
+  const top = softBox(g, W, 0.05, 0.75, surface('wood', color), 0, 0.74, 0.65);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(g, 0.05, 0.72, 0.05, mat(0x9ca3af, { metalness: .8, roughness: .3 }), sx * (W / 2 - 0.06), 0.36, 0.65 + sz * 0.31);
   box(g, W - 0.1, 0.4, 0.03, color, 0, 0.5, 1.0);
   const offs = monitors === 2 ? [-0.36, 0.36] : [0];
   for (const ox of offs) {
@@ -350,7 +483,11 @@ function desk(x, z, ry, screen = SCREENS.code, { wide = false, color = 0xe9e4dc,
     box(g, 0.05, 0.26, 0.05, 0x2d3139, ox, 0.88, 0.95); box(g, 0.22, 0.02, 0.16, 0x2d3139, ox, 0.77, 0.95);
   }
   box(g, 0.44, 0.02, 0.14, 0x2a2d33, 0, 0.775, 0.48); box(g, 0.06, 0.02, 0.1, 0x2a2d33, 0.32, 0.775, 0.5);
-  if (Math.random() < 0.6) cyl(g, 0.04, 0.035, 0.1, pick([0xffffff, 0xf97316, 0x38bdf8, 0x22c55e]), -W / 2 + 0.2, 0.82, 0.55, 10);
+  mug(g, -W / 2 + 0.18, 0.827, 0.6, 0xf0eee8);
+  const notebook = softBox(g, 0.22, 0.024, 0.29, 0x334155, W / 2 - 0.19, 0.785, 0.62, 0.12);
+  box(notebook, .19, .005, .26, 0xfaf6eb, 0, .014, 0, 0, false);
+  box(g, .014, .014, .19, 0x1e293b, W / 2 - .16, .813, .62, .16, false);
+  contactShadow(g, 0, .55, W + .5, 1.3);
   if (Math.random() < 0.3) { cyl(g, 0.06, 0.05, 0.1, 0xb45309, W / 2 - 0.18, 0.82, 0.8, 8); sphere(g, 0.1, 0x3f8f45, W / 2 - 0.18, 0.95, 0.8, 0); }
   officeChair(g, 0, 0, 0, chair);
   blockObj(top);
@@ -358,22 +495,28 @@ function desk(x, z, ry, screen = SCREENS.code, { wide = false, color = 0xe9e4dc,
 }
 function plant(x, z, s = 1, parent = office) {
   cyl(parent, 0.22 * s, 0.17 * s, 0.45 * s, 0xd6cfc4, x, 0.225 * s, z, 12);
-  sphere(parent, 0.42 * s, 0x3f7f3a, x, 0.75 * s, z);
-  sphere(parent, 0.3 * s, 0x4d9446, x + 0.12 * s, 1.05 * s, z - 0.08 * s);
+  cyl(parent, .018 * s, .024 * s, .65 * s, 0x41683b, x, .73 * s, z, 6);
+  for (let i = 0; i < 7; i++) {
+    const angle = i * 2.4, radius = .16 * s;
+    const leaf = oval(parent, .10 * s, .30 * s, .025 * s, i % 2 ? 0x4d9446 : 0x3f7f3a,
+      x + Math.sin(angle) * radius, (.7 + i * .055) * s, z + Math.cos(angle) * radius);
+    leaf.rotation.set(Math.cos(angle) * .6, angle, Math.sin(angle) * .6);
+  }
   blockRect(x - 0.25 * s, z - 0.25 * s, x + 0.25 * s, z + 0.25 * s, 0.1);
 }
 function sofa(x, z, ry, len = 2.2, color = 0x475569) {
   const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = ry; office.add(g);
-  const base = box(g, len, 0.42, 0.85, color, 0, 0.21, 0);
-  box(g, len, 0.5, 0.2, color, 0, 0.6, -0.33);
-  box(g, 0.18, 0.62, 0.85, color, -len / 2 + 0.09, 0.31, 0); box(g, 0.18, 0.62, 0.85, color, len / 2 - 0.09, 0.31, 0);
-  for (let i = 0; i < Math.round(len / 0.75); i++) box(g, 0.6, 0.08, 0.6, mat(color, { roughness: 1 }), -len / 2 + 0.45 + i * 0.72, 0.46, 0.05);
+  const base = softBox(g, len, 0.42, 0.85, surface('fabric', color), 0, 0.21, 0);
+  softBox(g, len, 0.5, 0.2, surface('fabric', color), 0, 0.6, -0.33);
+  softBox(g, 0.18, 0.62, 0.85, surface('fabric', color), -len / 2 + 0.09, 0.31, 0); softBox(g, 0.18, 0.62, 0.85, surface('fabric', color), len / 2 - 0.09, 0.31, 0);
+  for (let i = 0; i < Math.round(len / 0.75); i++) softBox(g, 0.6, 0.08, 0.6, mat(color, { roughness: 1 }), -len / 2 + 0.45 + i * 0.72, 0.46, 0.05);
+  contactShadow(g, 0, 0, len + .5, 1.2);
   blockObj(base, 0.05);
   return g;
 }
 function shelf(x, z, ry, w = 2) {
   const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = ry; office.add(g);
-  const frame = box(g, w, 2.0, 0.35, 0x7c5a3c, 0, 1.0, 0);
+  const frame = box(g, w, 2.0, 0.35, surface('wood', 0x9c7853), 0, 1.0, 0);
   for (let y = 0.3; y < 2; y += 0.45) for (let bx = -w / 2 + 0.15; bx < w / 2 - 0.1; bx += rnd(0.08, 0.14)) box(g, 0.07, rnd(0.25, 0.36), 0.25, pick([0xb91c1c, 0x1d4ed8, 0x15803d, 0xca8a04, 0x6b21a8, 0xf3f4f6]), bx, y + 0.16, 0.02);
   blockObj(frame, 0.1);
 }
@@ -653,41 +796,89 @@ class Agent {
     this.legs = [];
     for (const s of [-1, 1]) {
       const hip = new THREE.Group(); hip.position.set(0.11 * s, 0.85, 0); B.add(hip);
-      box(hip, 0.17, 0.44, 0.19, pants, 0, -0.21, 0);
+      softBox(hip, 0.17, 0.44, 0.19, pants, 0, -0.21, 0);
       const knee = new THREE.Group(); knee.position.set(0, -0.42, 0); hip.add(knee);
-      box(knee, 0.16, 0.36, 0.18, pants, 0, -0.18, 0);
-      box(knee, 0.18, 0.08, 0.28, 0x1c1917, 0, -0.39, 0.04);
+      softBox(knee, 0.16, 0.36, 0.18, pants, 0, -0.18, 0);
+      softBox(knee, 0.18, 0.08, 0.28, 0x1c1917, 0, -0.39, 0.04);
       this.legs.push({ hip, knee });
     }
-    box(B, 0.5, 0.62, 0.28, shirt, 0, 1.16, 0);
-    box(B, 0.52, 0.1, 0.3, pants, 0, 0.86, 0);
-    if (d.acc === 'vest') box(B, 0.52, 0.5, 0.3, 0xfacc15, 0, 1.12, 0);
-    box(B, 0.2, 0.06, 0.02, 0xffffff, 0, 1.4, 0.141, 0, false); // yoqa
-    this.arms = [];
+    softBox(B, 0.44, 0.62, 0.26, surface('fabric', shirt), 0, 1.16, 0);
+    softBox(B, 0.52, 0.1, 0.3, pants, 0, 0.86, 0);
+    if (d.acc === 'vest') softBox(B, 0.52, 0.5, 0.3, 0xfacc15, 0, 1.12, 0);
+    softBox(B, 0.2, 0.06, 0.02, 0xffffff, 0, 1.4, 0.141, 0, false); // yoqa
+    this.arms = []; this.elbows = [];
     for (const s of [-1, 1]) {
-      const sh = new THREE.Group(); sh.position.set(0.32 * s, 1.42, 0); B.add(sh);
-      box(sh, 0.13, 0.4, 0.15, shirt, 0, -0.2, 0); box(sh, 0.11, 0.22, 0.12, skin, 0, -0.5, 0);
+      const sh = new THREE.Group(); sh.position.set(0.27 * s, 1.42, 0); B.add(sh);
+      oval(sh, .075, .17, .078, surface('fabric', shirt), 0, -.14, 0);
+      const elbow = new THREE.Group(); elbow.position.y = -.29; sh.add(elbow);
+      oval(elbow, .055, .13, .06, skin, 0, -.12, 0);
+      oval(elbow, .055, .066, .035, skin, 0, -.28, .008);
+      this.elbows.push(elbow);
       this.arms.push(sh);
     }
     if (d.cleaner) { // shvabra
       const mop = new THREE.Group(); mop.position.set(0, -0.6, 0.05); this.arms[1].add(mop);
       cyl(mop, 0.02, 0.02, 1.4, 0x9ca3af, 0, -0.1, 0.25, 6).rotation.x = 0.35;
-      box(mop, 0.4, 0.06, 0.12, 0x60a5fa, 0, -0.78, 0.5);
+      softBox(mop, 0.4, 0.06, 0.12, 0x60a5fa, 0, -0.78, 0.5);
     }
-    const head = new THREE.Group(); head.position.set(0, 1.47, 0); B.add(head); this.head = head;
-    box(head, 0.13, 0.1, 0.13, skin, 0, 0.04, 0);
-    box(head, 0.34, 0.36, 0.32, skin, 0, 0.27, 0);
-    for (const s of [-1, 1]) box(head, 0.05, 0.055, 0.02, 0x111111, 0.08 * s, 0.29, 0.162, 0, false);
-    box(head, 0.1, 0.025, 0.02, 0x7f1d1d, 0, 0.18, 0.162, 0, false);
+    const head = new THREE.Group(); head.position.set(0, 1.47, 0); head.scale.set(.85, .86, .9); B.add(head); this.head = head;
+    softBox(head, 0.13, 0.1, 0.13, skin, 0, 0.04, 0);
+    oval(head, .166, .21, .158, skin, 0, .27, 0);
+    for (const s of [-1, 1]) softBox(head, 0.05, 0.055, 0.02, 0x111111, 0.08 * s, 0.29, 0.162, 0, false);
+    oval(head, .047, .011, .014, 0x9d5b55, 0, .177, .143);
+    // Ko'z oqi, qorachiq, qosh va kichik burun — yaqin kamera uchun.
+    for (const side of [-1, 1]) {
+      oval(head, .037, .029, .014, mat(0xf8fafc, { roughness: .3 }), side * .08, .29, .165);
+      oval(head, .015, .021, .009, mat(0x172033, { roughness: .22 }), side * .08, .289, .178);
+      softBox(head, 0.07, 0.014, 0.018, this.hairColor, side * 0.08, 0.343, 0.17, 0, false);
+      softBox(head, 0.048, 0.09, 0.07, skin, side * 0.179, 0.26, 0);
+      softBox(B, 0.018, 0.19, 0.018, 0x172033, side * 0.058, 1.31, 0.15, side * 0.2, false);
+    }
+    oval(head, .026, .038, .036, skin, 0, .245, .15);
+    softBox(B, 0.105, 0.115, 0.018, 0xf1f5f9, 0, 1.19, 0.158, 0, false);
+    softBox(B, 0.066, 0.022, 0.008, shirt, 0, 1.21, 0.17, 0, false);
     const hc = this.hairColor;
-    if (d.hair === 'short' || d.hair === 'bun' || d.hair === 'long') { box(head, 0.36, 0.1, 0.34, hc, 0, 0.47, 0); box(head, 0.36, 0.26, 0.07, hc, 0, 0.35, -0.15); }
-    if (d.hair === 'long') { box(head, 0.38, 0.55, 0.08, hc, 0, 0.2, -0.16); box(head, 0.05, 0.38, 0.28, hc, -0.18, 0.3, -0.02); box(head, 0.05, 0.38, 0.28, hc, 0.18, 0.3, -0.02); }
+    if (d.hair === 'short' || d.hair === 'bun' || d.hair === 'long') { softBox(head, 0.36, 0.1, 0.34, hc, 0, 0.47, 0); softBox(head, 0.36, 0.26, 0.07, hc, 0, 0.35, -0.15); }
+    if (d.hair === 'long') { softBox(head, 0.38, 0.55, 0.08, hc, 0, 0.2, -0.16); softBox(head, 0.05, 0.38, 0.28, hc, -0.18, 0.3, -0.02); softBox(head, 0.05, 0.38, 0.28, hc, 0.18, 0.3, -0.02); }
     if (d.hair === 'bun') sphere(head, 0.1, hc, 0, 0.52, -0.14, 1);
-    if (d.hair === 'cap') { box(head, 0.37, 0.12, 0.35, d.color, 0, 0.48, 0); box(head, 0.3, 0.03, 0.18, d.color, 0, 0.43, 0.24); }
-    if (d.acc === 'glasses') { box(head, 0.3, 0.07, 0.02, 0x111111, 0, 0.29, 0.172, 0, false); }
-    if (d.acc === 'beard') box(head, 0.32, 0.12, 0.05, hc, 0, 0.15, 0.15);
-    if (d.acc === 'headset') { box(head, 0.4, 0.04, 0.06, 0x111111, 0, 0.5, 0); box(head, 0.05, 0.12, 0.1, 0x111111, -0.19, 0.3, 0); box(head, 0.05, 0.12, 0.1, 0x111111, 0.19, 0.3, 0); box(head, 0.02, 0.02, 0.14, 0x111111, 0.15, 0.2, 0.1); }
-    this.root.traverse((o) => { if (o.isMesh) o.userData.agent = this; });
+    if (d.hair === 'cap') { softBox(head, 0.37, 0.12, 0.35, d.color, 0, 0.48, 0); softBox(head, 0.3, 0.03, 0.18, d.color, 0, 0.43, 0.24); }
+    if (d.acc === 'glasses') {
+      for (const side of [-1, 1]) {
+        for (const y of [0.251, 0.329]) softBox(head, 0.115, 0.012, 0.018, 0x111827, side * 0.08, y, 0.197, 0, false);
+        for (const x of [side * 0.08 - 0.053, side * 0.08 + 0.053]) softBox(head, 0.012, 0.08, 0.018, 0x111827, x, 0.29, 0.197, 0, false);
+      }
+      softBox(head, 0.05, 0.012, 0.018, 0x111827, 0, 0.3, 0.197, 0, false);
+    }
+    if (d.acc === 'beard') softBox(head, 0.32, 0.12, 0.05, hc, 0, 0.15, 0.15);
+    if (d.acc === 'headset') { softBox(head, 0.4, 0.04, 0.06, 0x111111, 0, 0.5, 0); softBox(head, 0.05, 0.12, 0.1, 0x111111, -0.19, 0.3, 0); softBox(head, 0.05, 0.12, 0.1, 0x111111, 0.19, 0.3, 0); softBox(head, 0.02, 0.02, 0.14, 0x111111, 0.15, 0.2, 0.1); }
+    // Bir xil materialli yuz/gavda detallari bitta draw callga yig'iladi.
+    const rigidGroups = [];
+    B.traverse(o => { if (o.isGroup) rigidGroups.push(o); });
+    for (const group of rigidGroups) {
+      const batches = new Map();
+      for (const mesh of group.children) {
+        if (!mesh.isMesh) continue;
+        const key = `${mesh.material.uuid}:${mesh.castShadow}`;
+        if (!batches.has(key)) batches.set(key, []);
+        batches.get(key).push(mesh);
+      }
+      for (const meshes of batches.values()) {
+        if (meshes.length < 2) continue;
+        const parts = meshes.map(mesh => {
+          mesh.updateMatrix();
+          const geometry = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+          return geometry.applyMatrix4(mesh.matrix);
+        });
+        const geometry = mergeGeometries(parts, false); parts.forEach(g => g.dispose());
+        if (!geometry) continue;
+        const merged = new THREE.Mesh(geometry, meshes[0].material);
+        merged.castShadow = meshes[0].castShadow; merged.receiveShadow = true;
+        group.add(merged); meshes.forEach(m => m.removeFromParent());
+      }
+    }
+    this.cup = mug(this.elbows[1], 0, -.28, .06, 0xf4f0e8); this.cup.visible = false;
+    this.contact = contactShadow(this.root, 0, 0, .8, .65);
+    this.root.traverse((o) => { if (o.isMesh && o !== this.contact) o.userData.agent = this; });
   }
   makeLabel() {
     const c = document.createElement('canvas'); c.width = 512; c.height = 176;
@@ -822,8 +1013,23 @@ class Agent {
       case 'wait': hy = Math.sin(tt * 1.2) * 0.6; a0 = this.pose === 'sit' ? -0.6 : 0; a1 = this.pose === 'sit' ? -0.6 : -2.6 + Math.sin(tt * 6) * 0.25; break;
     }
     if (this.chatWith && this.state === 'working') { if (this.chatWith.state === 'break' && this.chatWith.act === 'talk') { hy = 0.5 * Math.sign(Math.sin(this.yaw)); a0 = -0.6; } else this.chatWith = null; }
-    L[0].hip.rotation.x = h0; L[1].hip.rotation.x = h1; L[0].knee.rotation.x = k0; L[1].knee.rotation.x = k1;
-    A[0].rotation.x = a0; A[1].rotation.x = a1; this.body.position.y = by; this.head.rotation.y = hy; this.head.rotation.x = hx;
+    const blend = 1 - Math.exp(-dt * 12);
+    L[0].hip.rotation.x = lerp(L[0].hip.rotation.x, h0, blend);
+    L[1].hip.rotation.x = lerp(L[1].hip.rotation.x, h1, blend);
+    L[0].knee.rotation.x = lerp(L[0].knee.rotation.x, k0, blend);
+    L[1].knee.rotation.x = lerp(L[1].knee.rotation.x, k1, blend);
+    const drinking = this.act === 'drink' && this.state !== 'waiting' && this.pose !== 'walk';
+    const typing = this.act === 'type' && this.pose === 'sit' && this.state !== 'waiting';
+    if (typing) { a0 *= .65; a1 *= .65; }
+    if (drinking) a1 = -.8 + Math.sin(tt * .8) * .12;
+    A[0].rotation.x = lerp(A[0].rotation.x, a0, blend);
+    A[1].rotation.x = lerp(A[1].rotation.x, a1, blend);
+    this.elbows[0].rotation.x = lerp(this.elbows[0].rotation.x, typing ? -.65 : -.08, blend);
+    this.elbows[1].rotation.x = lerp(this.elbows[1].rotation.x, drinking ? -1.65 : typing ? -.65 : -.08, blend);
+    this.cup.visible = drinking;
+    this.body.position.y = lerp(this.body.position.y, by + (this.pose === 'walk' ? 0 : Math.sin(tt * 1.7) * .005), blend);
+    this.head.rotation.y = lerp(this.head.rotation.y, hy + (this.pose === 'walk' ? 0 : Math.sin(tt * .45) * .045), blend);
+    this.head.rotation.x = lerp(this.head.rotation.x, hx, blend);
   }
 }
 
@@ -985,6 +1191,7 @@ addEventListener('keydown', (e) => {
   walk.keys[e.code] = true;
   if (e.target.tagName === 'INPUT') return;
   const k = e.key.toLowerCase();
+  if (k === 'q' && !e.repeat) cycleQuality();
   if (k === '1') setMode('orbit'); if (k === '2') setMode('walk'); if (k === '3') setMode('follow'); if (k === '4') setMode('tour');
   if (k === 'n') toggleNight(); if (k === 'l') toggleLabels(); if (k === 'h') toggleClean(); if (k === 'v') toggleVertical();
   if (k === 's' && mode !== 'walk') cycleSpeed();
@@ -1013,11 +1220,58 @@ addEventListener('pointerup', (e) => {
   down = null;
 });
 
+function setQuality(index) {
+  qualityIndex = index;
+  const q = QUALITY[index];
+  if (q.bloom) ensureComposer();
+  sun.shadow.mapSize.set(q.shadow, q.shadow);
+  if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+  renderer.shadowMap.needsUpdate = true; shadowElapsed = 1;
+  roomLights.forEach(l => l.visible = q.lights);
+  streetLights.forEach(l => l.visible = q.lights);
+  document.getElementById('bQuality').innerHTML = `Sifat: ${q.name}<kbd>Q</kbd>`;
+  document.getElementById('bQuality').setAttribute('aria-label', `Grafik sifat: ${q.name}. Almashtirish`);
+  resize();
+}
+function cycleQuality() { setQuality((qualityIndex + 1) % QUALITY.length); }
+document.getElementById('bQuality').onclick = cycleQuality;
+// Faqat statik jihozlar birlashtiriladi; ekran, shisha, ship, agent va animatsiyalar alohida.
+function batchFurniture() {
+  office.updateMatrixWorld(true);
+  const batches = new Map();
+  office.traverse(mesh => {
+    if (!mesh.isMesh || mesh.isInstancedMesh || mesh === holo || (mesh.material.map && !mesh.material.userData.procedural) || mesh.material.transparent || mesh.material.wireframe) return;
+    for (let p = mesh.parent; p; p = p.parent) if (p === ceiling) return;
+    const key = `${mesh.material.uuid}:${mesh.castShadow}:${mesh.receiveShadow}`;
+    if (!batches.has(key)) batches.set(key, []);
+    batches.get(key).push(mesh);
+  });
+  for (const meshes of batches.values()) {
+    if (meshes.length < 3) continue;
+    const geometries = meshes.map(m => {
+      const g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+      g.applyMatrix4(m.matrixWorld); return g;
+    });
+    const geometry = mergeGeometries(geometries, false);
+    geometries.forEach(g => g.dispose());
+    if (!geometry) continue;
+    const merged = new THREE.Mesh(geometry, meshes[0].material);
+    merged.castShadow = meshes[0].castShadow; merged.receiveShadow = meshes[0].receiveShadow;
+    geometry.computeBoundingSphere(); scene.add(merged);
+    meshes.forEach(m => m.removeFromParent());
+  }
+}
+
 function resize() {
   let w = innerWidth, h = innerHeight;
   if (ui.vertical) w = Math.min(w, Math.round(h * 9 / 16));
   stage.style.width = w + 'px'; stage.style.height = h + 'px';
-  renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+  const q = QUALITY[qualityIndex];
+  renderScale = Math.min(devicePixelRatio || 1, q.dpr, Math.sqrt(q.pixels / Math.max(1, w * h)));
+  renderer.setPixelRatio(renderScale);
+  renderer.setSize(w, h);
+  if (composer) { composer.setPixelRatio(renderScale); composer.setSize(w, h); }
+  camera.aspect = w / h; camera.updateProjectionMatrix();
 }
 addEventListener('resize', resize);
 
@@ -1026,7 +1280,8 @@ const clock = new THREE.Clock();
 let t = 0, accScreens = 0, accHQ = 0, accLed = 0;
 const tmpV = new THREE.Vector3(), tmpL = new THREE.Vector3();
 function frame() {
-  const rdt = Math.min(clock.getDelta(), 0.1), dt = rdt * speed;
+  const rawDelta = clock.getDelta();
+  const rdt = Math.min(rawDelta, 0.1), dt = rdt * speed;
   t += dt; simTime += dt; simMin += dt;
 
   // hodisalar
@@ -1041,7 +1296,15 @@ function frame() {
   night = hour >= 19 || hour < 7;
   nightT = lerp(nightT, night ? 1 : 0, Math.min(1, rdt * 1.5));
   scene.background.copy(DAY_SKY).lerp(NIGHT_SKY, nightT); scene.fog.color.copy(scene.background);
-  sun.intensity = 2.4 * (1 - nightT); hemi.intensity = lerp(0.7, 0.12, nightT);
+  skyUniforms.top.value.copy(skyDayTop).lerp(skyNightTop, nightT);
+  skyUniforms.bottom.value.copy(skyDayBottom).lerp(skyNightBottom, nightT);
+  sun.intensity = lerp(2.4, .12, nightT);
+  hemi.intensity = lerp(.7, qualityIndex === 0 ? .48 : .16, nightT);
+  for (const m of matCache.values()) m.envMapIntensity = lerp(.45, .1, nightT);
+  for (const m of surfaces.values()) m.envMapIntensity = lerp(.45, .1, nightT);
+  for (const l of streetLights) l.intensity = nightT * 24;
+  rim.intensity = lerp(0.65, 0.22, nightT);
+  if (bloom) bloom.strength = lerp(0.22, 0.34, nightT);
   for (const l of roomLights) l.intensity = lerp(5, 20, nightT);
   for (const b of streetLamps) b.material.emissiveIntensity = nightT * 2;
   renderer.toneMappingExposure = lerp(1.0, 1.15, nightT);
@@ -1095,12 +1358,25 @@ function frame() {
 
   document.getElementById('clock').textContent = (night ? '🌙 ' : '☀️ ') + clockStr();
   ui.refresh();
-  renderer.render(scene, camera);
+  sky.position.copy(camera.position);
+  shadowElapsed += rdt;
+  if (shadowElapsed >= 1 / QUALITY[qualityIndex].shadowHz) { renderer.shadowMap.needsUpdate = true; shadowElapsed = 0; }
+  if (composer && QUALITY[qualityIndex].bloom) composer.render();
+  else renderer.render(scene, camera);
+  if (!document.hidden && rawDelta > 0 && rawDelta < .5) {
+    fpsTime += rawDelta; fpsFrames++;
+    if (fpsTime >= 1) {
+      document.getElementById('sFps').textContent = Math.round(fpsFrames / fpsTime);
+      fpsTime = 0; fpsFrames = 0;
+    }
+  }
   requestAnimationFrame(frame);
 }
 function isBlockedWall(x, z) { const i = ci(x), j = cj(z); if (i < 0 || j < 0 || i >= GW || j >= GH) return !(Math.abs(x) < 1.4 && z > 13 && z < 30); return wallGrid[j * GW + i] === 1; }
 
+batchFurniture();
 ui.build();
+setQuality(qualityIndex);
 log(`🏢 ${OFFICE_NAME} ochildi. ${agents.length} ta agent ishga tushdi`, 'ev');
 drawHQ();
 resize();
