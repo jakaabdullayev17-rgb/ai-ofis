@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI Ofis</title>
+<title>AI Ofis · Cinematic Edition</title>
 <style>
-  :root { --bg:#0b0f17; --panel:rgba(12,16,26,.82); --line:rgba(255,255,255,.1); --fg:#f3f4f6; --mut:#9ca3af; --acc:#38bdf8; --acc2:#f97316; }
+  :root { --bg:#10191b; --panel:rgba(15,24,27,.88); --line:rgba(224,210,181,.16); --fg:#f3eee4; --mut:#a6b2b3; --acc:#d9bc86; --acc2:#eaa16f; }
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; overflow:hidden; }
   #stage { position:absolute; top:0; left:50%; transform:translateX(-50%); overflow:hidden; }
   #c { display:block; outline:none; }
   body.vertical #stage { box-shadow:0 0 0 1px rgba(255,255,255,.15); }
-  .panel { position:absolute; background:var(--panel); border:1px solid var(--line); border-radius:12px; backdrop-filter:blur(8px); }
+  .panel { position:absolute; background:var(--panel); border:1px solid var(--line); border-radius:10px; backdrop-filter:blur(12px); box-shadow:0 8px 32px rgba(0,0,0,.16); }
   #top { top:12px; left:12px; padding:10px 14px; display:flex; gap:16px; align-items:center; }
   #brand { font-weight:800; letter-spacing:.06em; font-size:15px; }
   #brand b { color:var(--acc); }
@@ -56,7 +56,7 @@
 </script>
 </head>
 <body>
-<div id="loading">Ofis qurilmoqda…</div>
+<div id="loading">Ofis va avtoturargoh tayyorlanmoqda…</div>
 <div id="stage"><canvas id="c" tabindex="0"></canvas><div id="caption"><div class="big"></div><div class="sub"></div></div></div>
 
 <div id="top" class="panel">
@@ -74,6 +74,7 @@
   <button data-mode="walk">Ichida yurish<kbd>2</kbd></button>
   <button data-mode="follow">Kuzatish<kbd>3</kbd></button>
   <button data-mode="tour">Kino<kbd>4</kbd></button>
+  <button id="bParking" title="24 xodimning avtomobillari">Avtoturargoh<kbd>P</kbd></button>
   <button id="bQuality" title="Past / O‘rta / Yuqori">Sifat: O‘rta<kbd>Q</kbd></button>
   <button id="bNight">Kun / Tun<kbd>N</kbd></button>
   <button id="bLabels" class="on">Ismlar<kbd>L</kbd></button>
