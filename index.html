@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Ofis</title>
+<style>
+  :root { --bg:#0b0f17; --panel:rgba(12,16,26,.82); --line:rgba(255,255,255,.1); --fg:#f3f4f6; --mut:#9ca3af; --acc:#38bdf8; --acc2:#f97316; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; overflow:hidden; }
+  #stage { position:absolute; top:0; left:50%; transform:translateX(-50%); overflow:hidden; }
+  #c { display:block; outline:none; }
+  body.vertical #stage { box-shadow:0 0 0 1px rgba(255,255,255,.15); }
+  .panel { position:absolute; background:var(--panel); border:1px solid var(--line); border-radius:12px; backdrop-filter:blur(8px); }
+  #top { top:12px; left:12px; padding:10px 14px; display:flex; gap:16px; align-items:center; }
+  #brand { font-weight:800; letter-spacing:.06em; font-size:15px; }
+  #brand b { color:var(--acc); }
+  #clock { font:700 20px ui-monospace,Consolas,monospace; }
+  .stat { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+  .stat span { display:block; color:var(--fg); font:700 16px ui-monospace,Consolas,monospace; }
+  #btns { top:12px; right:12px; padding:6px; display:flex; flex-wrap:wrap; gap:4px; max-width:min(560px, calc(100vw - 24px)); justify-content:flex-end; }
+  button { background:rgba(255,255,255,.06); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:6px 10px; font:inherit; cursor:pointer; white-space:nowrap; }
+  button:hover { background:rgba(255,255,255,.14); }
+  button.on { background:var(--acc); color:#04121c; border-color:var(--acc); font-weight:700; }
+  kbd { font:10px ui-monospace,monospace; opacity:.6; margin-left:4px; }
+  #log { left:12px; bottom:12px; width:min(430px, calc(100vw - 24px)); padding:10px 12px; font:12px ui-monospace,Consolas,monospace; }
+  #log h4, #agents h4 { margin:0 0 6px; font:700 11px system-ui; letter-spacing:.08em; color:var(--mut); text-transform:uppercase; }
+  #logLines div { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:1px 0; }
+  #logLines .t { color:#64748b; } #logLines .tool { color:var(--acc); } #logLines .ok { color:#4ade80; } #logLines .warn { color:var(--acc2); } #logLines .ev { color:#c084fc; }
+  #agents { right:12px; top:110px; bottom:12px; width:220px; padding:10px; overflow:auto; }
+  .ag { display:flex; gap:8px; align-items:center; padding:5px 6px; border-radius:8px; cursor:pointer; }
+  .ag:hover, .ag.sel { background:rgba(255,255,255,.1); }
+  .ag i { width:10px; height:10px; border-radius:50%; flex:none; }
+  .ag div { min-width:0; } .ag b { display:block; font-size:12px; } .ag small { display:block; color:var(--mut); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #approve { left:50%; bottom:16px; transform:translateX(-50%); padding:12px 14px; display:none; gap:10px; align-items:center; border-color:var(--acc2); box-shadow:0 0 30px rgba(249,115,22,.35); max-width:calc(100vw - 24px); }
+  #approve.show { display:flex; }
+  #approve .msg b { color:var(--acc2); }
+  #approve button.go { background:#22c55e; color:#03140a; border-color:#22c55e; font-weight:700; }
+  #help { left:50%; top:12px; transform:translateX(-50%); padding:6px 12px; color:var(--mut); display:none; }
+  body.walk #help { display:block; }
+  #caption { position:absolute; left:0; right:0; bottom:16%; text-align:center; pointer-events:none; opacity:0; transition:opacity .6s, transform .6s; transform:translateY(12px); }
+  #caption.show { opacity:1; transform:none; }
+  #caption .big { display:inline-block; font:900 clamp(26px,5vw,56px)/1 system-ui,sans-serif; letter-spacing:.02em; color:#fff; text-shadow:0 4px 24px rgba(0,0,0,.6); padding:0 .2em; border-bottom:6px solid var(--acc); }
+  #caption .sub { margin-top:10px; font:700 clamp(13px,2vw,20px) system-ui; color:#e5e7eb; text-shadow:0 2px 10px rgba(0,0,0,.8); }
+  body.clean .panel { display:none !important; }
+  #loading { position:absolute; inset:0; display:grid; place-items:center; font:700 18px system-ui; color:var(--mut); }
+  @media (max-width: 760px) { #agents { display:none; } #log { max-height:30vh; overflow:hidden; } #top { gap:10px; flex-wrap:wrap; max-width:calc(100vw - 24px); top:auto; bottom:calc(30vh + 24px); padding:6px 10px; } #top .stat span { font-size:13px; } }
+  @media (max-width: 760px) and (min-height: 600px) { #top { bottom:auto; top:100px; } }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="loading">Ofis qurilmoqda…</div>
+<div id="stage"><canvas id="c" tabindex="0"></canvas><div id="caption"><div class="big"></div><div class="sub"></div></div></div>
+
+<div id="top" class="panel">
+  <div id="brand"></div>
+  <div id="clock">09:00</div>
+  <div class="stat">Agentlar<span id="sAgents">0</span></div>
+  <div class="stat">Tool calls<span id="sTools">0</span></div>
+  <div class="stat">Bajarildi<span id="sDone">0</span></div>
+  <div class="stat">Ruxsatlar<span id="sAppr">0</span></div>
+</div>
+
+<div id="btns" class="panel">
+  <button data-mode="orbit">Umumiy<kbd>1</kbd></button>
+  <button data-mode="walk">Ichida yurish<kbd>2</kbd></button>
+  <button data-mode="follow">Kuzatish<kbd>3</kbd></button>
+  <button data-mode="tour">Kino<kbd>4</kbd></button>
+  <button id="bNight">Kun / Tun<kbd>N</kbd></button>
+  <button id="bLabels" class="on">Ismlar<kbd>L</kbd></button>
+  <button id="bSpeed">Tezlik 1x<kbd>S</kbd></button>
+  <button id="bVert">9:16<kbd>V</kbd></button>
+  <button id="bClean">UI yashirish<kbd>H</kbd></button>
+</div>
+
+<div id="help" class="panel">W A S D — yurish · sichqoncha bilan torting — qarash · Shift — tez</div>
+
+<div id="log" class="panel"><h4>Jonli jurnal</h4><div id="logLines"></div></div>
+<div id="agents" class="panel"><h4>Jamoa</h4><div id="agList"></div></div>
+
+<div id="approve" class="panel">
+  <div class="msg"></div>
+  <button class="go">Ruxsat berish<kbd>Enter</kbd></button>
+  <button class="see">Ko'rish</button>
+</div>
+
+<script type="module" src="ofis.js"></script>
+</body>
+</html>
