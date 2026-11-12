@@ -1,20 +1,22 @@
-# AI Ofis · Cinematic Edition
+# AI Ofis · Realism Edition
 
-Three.js 0.160.0 bilan ishlaydigan procedural 3D ofis: 8 xona, 24 personaj,
-24 avtomobilli avtoturargoh. Video namunadagi low-poly uslubga yaqinlashtirilgan;
-asl video modellari yoki ularning aynan nusxasi emas.
+Three.js 0.160.0 bilan ishlaydigan 3D ofis: 8 xona, 24 personaj,
+24 avtomobilli avtoturargoh. Procedural sahna mahalliy PBR teksturalar, HDR va GLB
+modellari bilan boyitilgan. Fotorealistik yoki video bilan 1:1 nusxa deb hisoblanmaydi.
 
 ## Ishga tushirish
 
-`index.html`, `ofis.js` va `start.bat` bir papkada tursin.
+`index.html`, `ofis.js`, `start.bat` va **assets/** papkasi birga tursin.
 Windows kompyuterda Python o'rnatilgan bo'lsa, `start.bat` ni oching.
 Yoki shu papkada `python -m http.server 8765` buyrug'ini bajarib,
 http://localhost:8765/ manziliga kiring. Faylni ikki marta bosib `file://` orqali
 ishga tushirmang: modul yuklash cheklanishi mumkin.
 
 Internet faqat cdn.jsdelivr.net orqali Three.js va uning 0.160.0 addons modullarini
-olish uchun kerak. Tashqi model, tekstura, boshqa CDN va server API yo'q.
-GitHub Pages uchun `index.html` va `ofis.js` ni birga yangilang.
+olish uchun kerak. Model, HDR va teksturalar shu repozitoriyning `assets/`
+papkasidan olinadi; uchinchi tomon asset API yoki akkaunti kerak emas.
+GitHub Pages uchun `assets/` papkasini ham yuklash shart. Manbalar va litsenziyalar:
+[assets/CREDITS.md](assets/CREDITS.md).
 
 ## Boshqaruv
 
@@ -37,7 +39,28 @@ Ofis nomi: `?nom=Mening%20Ofisim`. Sifat: `?quality=low`, `?quality=medium`,
 `?quality=high`. Birga: `?nom=Mening%20Ofisim&quality=high`.
 Boshlang'ich vaqt 17:20 — iliq yorug'lik uchun. N bilan tun/kunga o'tiladi.
 
-## Qilingan o'zgarishlar
+## Realism yangilanishi
+
+- Poly Haven yog'och rang/normal/roughness xaritalari; kiyim va yumshoq mebellarga
+  mato normal/roughness xaritalari. Rang xaritasi sRGB, data xaritalari linear.
+- Haqiqiy HDR panoramadan PMREM akslari. HDR faqat yoritish/aks uchun;
+  tashqaridagi gradient osmon va kun/tun almashishi saqlanadi.
+- Yuqori rejimda 16 namunali SSAO (shaffof shisha va yozuvlarni hisoblamaydi),
+  to'rtta keng area light, HDR postprocessing va WebGL2 MSAA.
+- 24 personaj uchun birgalikda ishlatiladigan, silliq jag', burun, qovoq, quloq va
+  lab detallari bor original GLB bosh. Bosh avvalgi animatsiya bo'g'iniga ulanadi;
+  soch, aksessuar, kiyim rangi va agent shaxsi saqlanadi. To'liq humanoid skelet
+  yoki motion-capture yurish hali qo'shilmagan.
+- Gavda UV choklari va segmentlari yaxshilandi, qo'l barmoqlari qo'shildi.
+- Dam olish zonasidagi ikki puf o'rniga teksturali GLB kreslo (Past rejimda puf).
+- Avtomobillarda lak akslari, silliq shinalar, tormoz diski, support, eshik
+  choklari va LED fara detallari. Kuzovlar hali procedural.
+- Assetlar fon rejimida yuklanadi: muvaffaqiyatsiz yuklanish ofisni to'xtatmaydi.
+  Q bilan Pastga o'tish procedural fallbackni qaytaradi. Low URL bilan boshlansa,
+  yuqori detallar umuman so'ralmaydi; O'rta/Yuqoriga o'tganda bir marta yuklanadi.
+- WebGL ishga tushmasa, cheksiz loading o'rniga tushunarli xabar ko'rsatiladi.
+
+## Oldingi o'zgarishlar
 
 - Personajlar: shakllantirilgan gavda, yelka va qo'llar, tirsaklar, yuz, soch,
   soqol, ko'zoynak, garnitura; turli kiyimlar, yoqa, galstuk, ID karta, soat.
@@ -61,11 +84,14 @@ Boshlang'ich vaqt 17:20 — iliq yorug'lik uchun. N bilan tun/kunga o'tiladi.
 
 ## Sifat va tezlik
 
-| Rejim | Piksel chegarasi | Soya | Bloom / nuqtaviy chiroqlar |
+| Rejim | Piksel chegarasi | Soya | Qo'shimcha grafika |
 |---|---|---|---|
-| Past | 1x gacha, 1.1 mln | 1024; 20 Hz | O'chiq; ambient yorug'lik saqlanadi |
-| O'rta | 1.25x gacha, 2.3 mln | 2048; 30 Hz | Yoqilgan |
-| Yuqori | 2x gacha, 5 mln | 4096; 60 Hz | Yoqilgan |
+| Past | 1x gacha, 1.1 mln | 1024; 20 Hz | Procedural material/model; bloom, SSAO, area light o'chiq |
+| O'rta | 1.25x gacha, 2.3 mln | 2048; 30 Hz | PBR, HDR, GLB, bloom; SSAO/area light o'chiq |
+| Yuqori | 2x gacha, 8.3 mln | 4096; 60 Hz | PBR, HDR, GLB, bloom, SSAO va area light |
+
+1000px dan keng oynada boshlang'ich sifat Yuqori, qolganida O'rta. URL parametri
+buni almashtiradi. Core i7 nomi videokarta kuchini bildirmaydi; GPU va VRAM ham muhim.
 
 Past rejimda parking nom lavhalari yashiriladi. Agentlar, avtomobillar va
 simulyatsiya qoladi. Soya yangilanishi butun animatsiya FPSi emas.
@@ -86,7 +112,10 @@ avtomobil to'qnashuvi; 1800 simulyatsiya kadri. Bu testda GPU renderi va
 Canvas chizish o'rniga test funksiyalari ishlatilgan.
 Modellar joylashuvi alohida offline 3D renderda ham ko'rib chiqilgan;
 u brauzer ranglari, teksturalari yoki FPSini tasdiqlamaydi.
-Haqiqiy brauzer/GPU testi bu muhitda bajarilmadi.
+GLTFLoader bilan ikkala GLB va RGBELoader bilan HDR parse qilindi; 24 yuz/2 kreslo,
+Q fallback va qayta yoqish tekshirildi. Tekshiruvda renderer va rasmlar chizilishi
+almashtirilgan: bu GPU yoki FPS testi emas. WebGL o'chirilgan tekshiruv muhiti
+sabab yakuniy brauzer tasviri va unumdorlik foydalanuvchi qurilmasida baholanadi.
 
 Hozirgi jurnal va ishlar — simulyatsiya. Haqiqiy AI API, post joylash yoki
 Claude ishini jonli kuzatish ulanmagan. Grafik yangilanish buni o'zgartirmaydi.
