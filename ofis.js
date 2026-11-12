@@ -6,16 +6,20 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
+import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // Q: past / o'rta / yuqori. Simulyatsiya tezligi sifatga bog'liq emas.
 const QUALITY = [
   { name: 'Past', dpr: 1, pixels: 1100000, shadow: 1024, bloom: false, lights: false, shadowHz: 20 },
   { name: "O'rta", dpr: 1.25, pixels: 2300000, shadow: 2048, bloom: true, lights: true, shadowHz: 30 },
-  { name: 'Yuqori', dpr: 2, pixels: 5000000, shadow: 4096, bloom: true, lights: true, shadowHz: 60 },
+  { name: 'Yuqori', dpr: 2, pixels: 8300000, shadow: 4096, bloom: true, lights: true, shadowHz: 60 },
 ];
 const qualityParam = new URLSearchParams(location.search).get('quality');
-let qualityIndex = ({ low: 0, medium: 1, high: 2 })[qualityParam] ?? 1;
+let qualityIndex = ({ low: 0, medium: 1, high: 2 })[qualityParam] ?? (innerWidth > 1000 ? 2 : 1);
 let renderScale = 1, shadowElapsed = 1, fpsTime = 0, fpsFrames = 0;
 
 // Ofis nomini URL orqali o'zgartirish mumkin: index.html?nom=Mening%20Ofisim
@@ -66,7 +70,7 @@ function canvasTex(w, h, draw) {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
   t.userData = { canvas: c, ctx }; return t;
 }
-// Deterministik teksturalar: tashqi rasm yoki model yuklanmaydi.
+// Procedural fallback loads immediately; local PBR assets arrive asynchronously.
 const surfaces = new Map();
 function surface(kind, color, repeat = 1) {
   const key = `${kind}:${color}:${repeat}`;
@@ -108,7 +112,7 @@ function surface(kind, color, repeat = 1) {
   material.userData.procedural = true; surfaces.set(key, material); return material;
 }
 function oval(parent, rx, ry, rz, material, x, y, z) {
-  if (!geoCache.has('oval')) geoCache.set('oval', new THREE.SphereGeometry(1, 16, 12));
+  if (!geoCache.has('oval')) geoCache.set('oval', new THREE.SphereGeometry(1, 24, 16));
   const mesh = new THREE.Mesh(geoCache.get('oval'), material.isMaterial ? material : mat(material, { roughness: 0.58, metalness: 0 }));
   mesh.scale.set(rx, ry, rz); mesh.position.set(x, y, z);
   mesh.castShadow = true; mesh.receiveShadow = true; parent.add(mesh); return mesh;
@@ -170,7 +174,18 @@ function softBox(parent, w, h, d, m, x, y, z, ry = 0, shadow = true) {
 // ---------------------------------------------------------------- sahna
 const canvas = document.getElementById('c');
 const stage = document.getElementById('stage');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+} catch (error) {
+  document.getElementById('loading').textContent = '3D uchun WebGL kerak. Brauzerda grafik tezlashtirishni yoqing va sahifani qayta oching.';
+  throw error;
+}
+canvas.addEventListener('webglcontextlost', event => {
+  event.preventDefault();
+  const notice = document.getElementById('assetStatus');
+  notice.hidden = false; notice.textContent = 'Grafik aloqa uzildi. Sahifani qayta yuklang.';
+});
 renderer.setPixelRatio(renderScale);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -205,11 +220,28 @@ scene.add(sun);
 // Faqat quyosh soya chizadi; to'ldiruvchi chiroq qo'shimcha shadow pass talab qilmaydi.
 const rim = new THREE.DirectionalLight(0xa9d9ff, 0.65);
 rim.position.set(-18, 16, -20); scene.add(rim);
-let composer = null, bloom = null;
+let composer = null, bloom = null, ambientOcclusion = null;
 function ensureComposer() {
   if (composer) return;
-  composer = new EffectComposer(renderer);
+  // Half-float target preserves HDR highlights; WebGL2 MSAA keeps geometry edges clean.
+  const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
+  target.samples = renderer.capabilities.isWebGL2 ? 4 : 0;
+  composer = new EffectComposer(renderer, target);
   composer.addPass(new RenderPass(scene, camera));
+  ambientOcclusion = new SSAOPass(scene, camera, 1, 1, 16);
+  ambientOcclusion.kernelRadius = .38;
+  ambientOcclusion.minDistance = .00002;
+  ambientOcclusion.maxDistance = .0025;
+  // Do not turn transparent glass, name sprites or the sky into opaque AO blockers.
+  const overrideVisibility = ambientOcclusion.overrideVisibility.bind(ambientOcclusion);
+  ambientOcclusion.overrideVisibility = function () {
+    overrideVisibility();
+    scene.traverse(object => {
+      if (object.isSprite || object.material?.transparent || object.material?.isShaderMaterial) object.visible = false;
+    });
+  };
+  ambientOcclusion.enabled = qualityIndex === 2;
+  composer.addPass(ambientOcclusion);
   bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.22, 0.45, 1.15);
   composer.addPass(bloom);
   // Tone mapping va sRGB konversiyasi oxirida, faqat bir marta.
@@ -223,17 +255,28 @@ const roomEnvironment = new RoomEnvironment();
 const environmentTarget = pmrem.fromScene(roomEnvironment, 0.04);
 scene.environment = environmentTarget.texture;
 roomEnvironment.dispose(); pmrem.dispose();
+let hdrEnvironment = null;
+const importedMaterials = new Set();
+const assetReplacements = [];
+const faceReplacements = [];
+let realismStarted = false;
 // Osmon gumbazi kamera bilan birga siljiydi, fog ufqni yumshatadi.
 const skyUniforms = { top: { value: new THREE.Color(0x6ba5dd) }, bottom: { value: new THREE.Color(0xdde8ed) } };
 const sky = new THREE.Mesh(new THREE.SphereGeometry(180, 24, 12), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, uniforms: skyUniforms,
   vertexShader: 'varying vec3 vDir; void main(){vDir=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
-  fragmentShader: 'uniform vec3 top; uniform vec3 bottom; varying vec3 vDir; void main(){float h=smoothstep(-0.12,0.8,normalize(vDir).y); gl_FragColor=vec4(mix(bottom,top,h),1.0); \n #include <tonemapping_fragment> \n #include <colorspace_fragment> }'
+  fragmentShader: 'uniform vec3 top; uniform vec3 bottom; varying vec3 vDir; void main(){float h=smoothstep(-0.12,0.8,normalize(vDir).y); gl_FragColor=vec4(mix(bottom,top,h),1.0); \n #include <tonemapping_fragment> \n #include <colorspace_fragment> \n }'
 }));
 sky.frustumCulled = false; scene.add(sky);
 const skyDayTop = new THREE.Color(0x779bb8), skyDayBottom = new THREE.Color(0xefd9b9);
 const skyNightTop = new THREE.Color(0x020511), skyNightBottom = new THREE.Color(0x101b30);
 const streetLights = [];
+RectAreaLightUniformsLib.init();
+const areaLights = [];
+for (const [x, z, w, h] of [[-14,-5,5,8],[1,-6,8,9],[15,-10,5,5],[12,10,5,5]]) {
+  const light = new THREE.RectAreaLight(0xffe5c5, 2.2, w, h);
+  light.position.set(x, 2.85, z); light.lookAt(x, 0, z); scene.add(light); areaLights.push(light);
+}
 
 // ---------------------------------------------------------------- navigatsiya to'ri (A* uchun)
 const CELL = 0.5, GX0 = -20, GZ0 = -14, GW = 80, GH = 56;
@@ -618,8 +661,11 @@ const studioDesk = desk(-10.0, 12.35, 0, SCREENS.video, { monitors: 2, chair: 0x
   spots.lounge.push(mkSpot(8.05, 9.75, Math.PI / 2, 'sit', 0.5), mkSpot(8.05, 11.05, Math.PI / 2, 'sit', 0.5));
   // puflar
   for (const [x, z] of [[15.6, 13.1], [17.0, 12.6]]) {
-    const b = sphere(office, 0.42, pick([0xef4444, 0x8b5cf6, 0x14b8a6]), x, 0.25, z, 2); b.scale.y = 0.7;
-    spots.lounge.push(mkSpot(x, z, Math.PI, 'sit', 0.32));
+    const holder = new THREE.Group(); holder.position.set(x, 0, z); holder.rotation.y = Math.PI; office.add(holder);
+    holder.userData.assetFallback = true;
+    const b = sphere(holder, .42, 0x52636b, 0, .25, 0, 2); b.scale.y = .7;
+    const spot = mkSpot(x, z, Math.PI, 'sit', .32); spots.lounge.push(spot);
+    assetReplacements.push({ holder, fallback: b, model: null, spot });
   }
   // televizor
   box(office, 1.8, 0.5, 0.45, 0x3f3f46, 11.5, 0.25, 13.55);
@@ -864,7 +910,7 @@ function buildCar(def,index) {
   g.position.set(col<6?-21.1+col*3.2:5.1+(col-6)*3.2,.09,row?45.0:33.4);g.rotation.y=row?Math.PI:0;parking.add(g);
   const paintColor=CAR_PALETTE[index%CAR_PALETTE.length];
   if(!carPaints.has(paintColor))carPaints.set(paintColor,new THREE.MeshPhysicalMaterial({color:paintColor,metalness:.58,roughness:.27,clearcoat:.75,clearcoatRoughness:.2,envMapIntensity:.65}));
-  const paint=carPaints.get(paintColor);
+  const paint=carPaints.get(paintColor); paint.clearcoat=1; paint.clearcoatRoughness=.12; paint.roughness=.22;
   const dark=mat(0x111820,{roughness:.5}),chrome=mat(0x9aa5ae,{metalness:.93,roughness:.2});
   const glass=mat(0x1c3442,{metalness:.22,roughness:.16,envMapIntensity:.9,side:THREE.DoubleSide});
   const rubber=mat(0x15191b,{roughness:.96}),headlight=mat(0xd7e4e8,{emissive:0xa6ccdf,emissiveIntensity:.35,roughness:.22});
@@ -888,14 +934,18 @@ function buildCar(def,index) {
     const mirror=softBox(g,.21,.12,.23,paint,side*.96,h+.23,.70);box(mirror,.012,.085,.14,chrome,side*.11,0,-.02);
     for(const z of coupe?[-.15]:[-.75,.40])softBox(g,.026,.035,.16,chrome,side*.922,h-.10,z);
     box(g,.03,.015,2.3,dark,side*.923,.52,-.02);
+    for(const doorZ of coupe?[.75,-1.1]:[.75,-.27,-1.1])box(g,.006,h-.52,.008,dark,side*.925,(h+.52)/2,doorZ);
+    for(const dz of [-.025,.025])softBox(g,.39,.015,.009,mat(0xeaf6ff,{emissive:0xc9e8ff,emissiveIntensity:2.2}),side*.59,h-.21+dz,L+.006);
     for(const z of [-1.44,1.42]) {
-      const tyre=cyl(g,.34,.34,.22,rubber,side*.91,.34,z,20);tyre.rotation.z=Math.PI/2;
+      const tyre=cyl(g,.34,.34,.22,rubber,side*.91,.34,z,40);tyre.rotation.z=Math.PI/2;
       const rim=cyl(g,.245,.245,.025,chrome,side*1.03,.34,z,16);rim.rotation.z=Math.PI/2;
       const inner=cyl(g,.19,.19,.029,dark,side*1.046,.34,z,16);inner.rotation.z=Math.PI/2;
       for(let k=0;k<5;k++) {
         const a=k*Math.PI*2/5;
         const spoke=box(g,.035,.05,.34,chrome,side*1.065,.34,z);spoke.rotation.x=a;
       }
+      const brake=cyl(g,.17,.17,.012,mat(0x77818a,{metalness:.85,roughness:.48}),side*1.052,.34,z,32);brake.rotation.z=Math.PI/2;
+      softBox(g,.025,.13,.055,mat(index%2?0x79362f:0x323941,{metalness:.25,roughness:.4}),side*1.061,.37,z+.13);
       const hub=cyl(g,.067,.067,.035,chrome,side*1.075,.34,z,12);hub.rotation.z=Math.PI/2;
     }
     softBox(g,.45,.10,.045,headlight,side*.59,h-.21,L-.02);
@@ -1036,7 +1086,7 @@ class Agent {
     const skin=mat(this.skin,{roughness:.7,metalness:0});
     const hair=mat(this.hairColor,{roughness:.86,metalness:0});
     const clothColor=new THREE.Color(d.color).lerp(new THREE.Color(0x657079),.18);
-    const shirt=surface('fabric',clothColor.getHex(),2);
+    const shirt=surface('fabric',clothColor.getHex(),2); shirt.side=THREE.DoubleSide;
     const pants=surface('fabric',d.cleaner?0x283b55:[0x26313a,0x363a3d,0x263b48,0x443d38][index%4],2);
     const leather=mat(index%3===0?0x3b2c24:0x1b2027,{roughness:.43});
     const cream=mat(0xe8e1d5,{roughness:.86});
@@ -1044,9 +1094,9 @@ class Agent {
     for(const side of [-1,1]) {
       const hip=new THREE.Group();hip.position.set(side*.105,.85,0);B.add(hip);
       // Rounded tapered trouser legs maintain the existing seated joint positions.
-      const thigh=cyl(hip,.089,.073,.40,pants,0,-.20,0,8);thigh.scale.z=1.08;
+      const thigh=cyl(hip,.089,.073,.40,pants,0,-.20,0,16);thigh.scale.z=1.08;
       const knee=new THREE.Group();knee.position.y=-.42;hip.add(knee);
-      const shin=cyl(knee,.073,.060,.35,pants,0,-.175,0,8);shin.scale.z=1.12;
+      const shin=cyl(knee,.073,.060,.35,pants,0,-.175,0,16);shin.scale.z=1.12;
       softBox(knee,.147,.085,.27,leather,0,-.378,.045);
       softBox(knee,.15,.018,.275,0x10151b,0,-.416,.045);
       this.legs.push({hip,knee});
@@ -1054,21 +1104,22 @@ class Agent {
     // Eight-sided tailored torso: waist, chest and shoulders instead of one cube.
     const shape=new THREE.BufferGeometry(), vertices=[], indices=[];
     const rings=[[.86,.18,.115],[1.02,.17,.115],[1.29,.225,.14],[1.41,.215,.12],[1.46,.085,.07]];
-    rings.forEach(([y,rx,rz])=>{for(let i=0;i<8;i++){const a=i*Math.PI/4;vertices.push(Math.sin(a)*rx,y,Math.cos(a)*rz);}});
-    for(let r=0;r<rings.length-1;r++)for(let i=0;i<8;i++){const a=r*8+i,b=r*8+(i+1)%8,c=a+8,e=b+8;indices.push(a,b,c,b,e,c);}
+    const sides=24;
+    rings.forEach(([y,rx,rz])=>{for(let i=0;i<=sides;i++){const a=i*Math.PI*2/sides;vertices.push(Math.sin(a)*rx,y,Math.cos(a)*rz);}});
+    for(let r=0;r<rings.length-1;r++)for(let i=0;i<sides;i++){const a=r*(sides+1)+i,b=a+1,c=a+sides+1,e=b+sides+1;indices.push(a,b,c,b,e,c);}
     shape.setAttribute('position',new THREE.Float32BufferAttribute(vertices,3));shape.setIndex(indices);shape.computeVertexNormals();
     // UVs allow a subtle fabric weave on the torso.
-    const uv=[];rings.forEach((r,j)=>{for(let i=0;i<8;i++)uv.push(i/7,j/4);});shape.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));
+    const uv=[];rings.forEach((r,j)=>{for(let i=0;i<=sides;i++)uv.push(i/sides,j/4);});shape.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));
     const torso=new THREE.Mesh(shape,shirt);torso.castShadow=true;torso.receiveShadow=true;B.add(torso);
     softBox(B,.36,.09,.23,pants,0,.875,0);
     softBox(B,.35,.025,.235,leather,0,.925,0);
     softBox(B,.045,.028,.012,mat(0xb4a68e,{metalness:.8,roughness:.3}),0,.925,.126);
     // Different outfits while retaining every agent's original identifying colour.
     if((index%3!==1||d.role==='Bosh agent')&&!d.cleaner) {
-      softBox(B,.15,.30,.018,cream,0,1.29,.134);
-      const left=softBox(B,.055,.26,.028,shirt,-.09,1.30,.151);left.rotation.z=-.25;
-      const right=softBox(B,.055,.26,.028,shirt,.09,1.30,.151);right.rotation.z=.25;
-      if(index%3===0||d.role==='Bosh agent') {softBox(B,.035,.20,.018,mat(d.color,{roughness:.65}),0,1.29,.15);}
+      polygon(B,[[-.065,1.43,.13],[-.025,1.20,.15],[.025,1.20,.15],[.065,1.43,.13]],cream);
+      const lapel=shirt;
+      for(const side of [-1,1]) polygon(B,[[side*.052,1.44,.103],[side*.145,1.33,.144],[side*.063,1.19,.15],[side*.081,1.31,.15]],lapel);
+      if(index%3===0||d.role==='Bosh agent') {softBox(B,.026,.17,.008,mat(d.color,{roughness:.65}),0,1.30,.147);}
     }
     for(let y=1.05;y<1.35;y+=.1) oval(B,.008,.008,.005,0xb3b7b5,.015,y,.143);
     if(d.acc==='vest') {
@@ -1082,34 +1133,40 @@ class Agent {
       const shoulder=new THREE.Group();shoulder.position.set(side*.245,1.40,0);B.add(shoulder);
       oval(shoulder,.083,.17,.085,shirt,side*.008,-.135,0);
       const elbow=new THREE.Group();elbow.position.y=-.29;shoulder.add(elbow);
-      const sleeve=cyl(elbow,.064,.047,.22,shirt,0,-.11,0,8);
+      const sleeve=cyl(elbow,.064,.047,.22,shirt,0,-.11,0,16);
       softBox(elbow,.10,.035,.10,cream,0,-.225,0);
       oval(elbow,.049,.062,.034,skin,0,-.275,.015);
       oval(elbow,.023,.035,.026,skin,-side*.04,-.26,.025);
+      for(let finger=0;finger<4;finger++) {
+        const digit=oval(elbow,.009,.031-finger*.002,.011,skin,-.029+finger*.019,-.316,.018);
+        digit.rotation.x=.12;
+      }
       if(side===-1&&index%3===0) {softBox(elbow,.105,.035,.095,leather,0,-.232,0);softBox(elbow,.07,.026,.018,mat(0x9ca7b0,{metalness:.7,roughness:.25}),0,-.232,.053);}
       this.arms.push(shoulder);this.elbows.push(elbow);
     }
     const head=new THREE.Group();head.position.set(0,1.47,0);B.add(head);this.head=head;
     cyl(head,.055,.068,.12,skin,0,.04,0,10);
-    const face=oval(head,.142,.181,.136,skin,0,.252,0);
+    const faceParts=new THREE.Group(); head.add(faceParts);
+    faceReplacements.push({agent:this,holder:head,fallback:faceParts,model:null});
+    const face=oval(faceParts,.142,.181,.136,skin,0,.252,0);
     // Jaw and cheeks give a readable silhouette, without oversized cartoon eyes.
-    oval(head,.108,.085,.11,skin,0,.145,.008);
+    oval(faceParts,.108,.085,.11,skin,0,.145,.008);
     for(const side of [-1,1]) {
-      oval(head,.028,.048,.024,skin,side*.144,.244,-.005);
-      oval(head,.026,.014,.010,mat(0xe3ded5,{roughness:.45}),side*.060,.276,.125);
-      oval(head,.010,.012,.006,mat(index%2?0x33443d:0x4b3324,{roughness:.3}),side*.06,.275,.135);
-      oval(head,.005,.008,.004,0x10161b,side*.06,.275,.139);
-      const brow=softBox(head,.052,.012,.017,hair,side*.061,.306,.127);brow.rotation.z=-side*.08;
+      oval(faceParts,.028,.048,.024,skin,side*.144,.244,-.005);
+      oval(faceParts,.026,.014,.010,mat(0xe3ded5,{roughness:.45}),side*.060,.276,.125);
+      oval(faceParts,.010,.012,.006,mat(index%2?0x33443d:0x4b3324,{roughness:.3}),side*.06,.275,.135);
+      oval(faceParts,.005,.008,.004,0x10161b,side*.06,.275,.139);
+      const brow=softBox(head,.048,.006,.012,hair,side*.061,.306,.127);brow.rotation.z=-side*.08;
     }
-    oval(head,.022,.045,.027,skin,0,.235,.128);
-    oval(head,.027,.015,.026,skin,0,.209,.144);
-    oval(head,.040,.009,.010,mat(0x975e57,{roughness:.75}),0,.169,.118);
+    oval(faceParts,.022,.045,.027,skin,0,.235,.128);
+    oval(faceParts,.027,.015,.026,skin,0,.209,.144);
+    oval(faceParts,.040,.009,.010,mat(0x975e57,{roughness:.75}),0,.169,.118);
     // Hair cap with separate swept locks. Original short / long / bun / cap options remain.
-    const cap=oval(head,.148,.10,.141,hair,0,.383,-.006);
-    oval(head,.145,.14,.061,hair,0,.30,-.099);
-    for(let i=0;i<5;i++) {
-      const lock=oval(head,.042,.055,.07,hair,-.105+i*.05,.393-i*.006,.066);
-      lock.rotation.z=.45;lock.rotation.x=-.22;
+    const cap=oval(head,.139,.065,.132,hair,0,.395,-.006);
+    oval(head,.134,.12,.038,hair,0,.30,-.106);
+    for(let i=0;i<9;i++) {
+      const lock=oval(head,.017,.022,.075,hair,-.107+i*.026,.412-Math.abs(i-4)*.007,.045);
+      lock.rotation.z=.20;lock.rotation.x=-.24;
     }
     if(d.hair==='long') {
       oval(head,.155,.23,.079,hair,0,.23,-.104);
@@ -1118,9 +1175,9 @@ class Agent {
     if(d.hair==='bun') {oval(head,.082,.079,.075,hair,0,.431,-.10);cyl(head,.065,.065,.018,0x3c3441,0,.431,-.10,10).rotation.x=Math.PI/2;}
     if(d.hair==='cap') {oval(head,.16,.085,.15,shirt,0,.42,0);softBox(head,.24,.025,.16,shirt,0,.399,.16);}
     if(d.acc==='beard') {
-      oval(head,.105,.055,.05,hair,0,.123,.065);
-      for(const side of [-1,1]) oval(head,.025,.07,.033,hair,side*.103,.18,.071);
-      softBox(head,.075,.012,.016,hair,0,.19,.131);
+      oval(head,.092,.028,.060,hair,0,.13,.05);
+      for(const side of [-1,1]) oval(head,.014,.055,.030,hair,side*.103,.18,.04);
+      softBox(head,.065,.007,.010,hair,0,.19,.131);
     }
     if(d.acc==='glasses') {
       for(const side of [-1,1]) {
@@ -1491,10 +1548,128 @@ addEventListener('pointerup', (e) => {
   down = null;
 });
 
+// Local assets are optional enhancements. Failed requests retain the running procedural office.
+const pbrMaterials = new Map();
+const textureLoader = new THREE.TextureLoader();
+function applyRealismQuality() {
+  const enhanced = qualityIndex > 0;
+  for (const [material, maps] of pbrMaterials) {
+    material.map = enhanced ? maps.color : maps.originalMap;
+    material.normalMap = enhanced ? maps.normal : null;
+    material.roughnessMap = enhanced ? maps.roughness : null;
+    material.bumpMap = enhanced ? null : maps.originalBump;
+    material.color.copy(enhanced ? maps.tint : maps.originalColor);
+    material.roughness = enhanced ? 1 : maps.originalRoughness;
+    material.needsUpdate = true;
+  }
+  scene.environment = enhanced && hdrEnvironment ? hdrEnvironment.texture : environmentTarget.texture;
+  for (const replacement of [...assetReplacements, ...faceReplacements]) {
+    const ready = enhanced && !!replacement.model;
+    replacement.fallback.visible = !ready;
+    if (replacement.model) replacement.model.visible = ready;
+    if (replacement.spot) {
+      replacement.spot.seatY = ready ? .43 : .32;
+      for(const agent of agents) if(agent.spot === replacement.spot) agent.seatY = replacement.spot.seatY;
+    }
+  }
+}
+async function loadRealismAssets() {
+  if (realismStarted) return;
+  realismStarted = true;
+  const status = document.getElementById('assetStatus');
+  status.hidden = false;
+  let completed = 0;
+  const jobs = [];
+  const progress = () => { status.textContent = `Realistik detallar: ${completed}/4`; };
+  progress();
+  const repeatMap = (texture, repeat) => {
+    const copy = texture.clone(); copy.wrapS = copy.wrapT = THREE.RepeatWrapping;
+    copy.repeat.set(repeat, repeat); copy.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    copy.needsUpdate = true; return copy;
+  };
+  jobs.push((async () => {
+    const [woodColor, woodNormal, woodRough, fabricNormal, fabricRough] = await Promise.all([
+      'wood_diff','wood_nor_gl','wood_rough','fabric_nor_gl','fabric_rough'
+    ].map(name => textureLoader.loadAsync(`assets/textures/${name}.webp`)));
+    woodColor.colorSpace = THREE.SRGBColorSpace;
+    for (const [key, material] of surfaces) {
+      const [kind, , repeats] = key.split(':');
+      if (!['wood','fabric'].includes(kind)) continue;
+      const repeat = Number(repeats);
+      const originalColor = material.color.clone();
+      pbrMaterials.set(material, {
+        originalMap: material.map, originalBump: material.bumpMap,
+        originalColor, originalRoughness: material.roughness,
+        color: kind === 'wood' ? repeatMap(woodColor,repeat) : material.map,
+        normal: repeatMap(kind === 'wood' ? woodNormal : fabricNormal, repeat),
+        roughness: repeatMap(kind === 'wood' ? woodRough : fabricRough, repeat),
+        tint: kind === 'wood' ? originalColor.clone().lerp(new THREE.Color(0xffffff), .68) : originalColor.clone()
+      });
+      material.normalScale.setScalar(kind === 'wood' ? .42 : .28);
+    }
+    applyRealismQuality();
+  })());
+  jobs.push((async () => {
+    const hdr = await new RGBELoader().loadAsync('assets/environment/studio.hdr');
+    const generator = new THREE.PMREMGenerator(renderer);
+    try { hdrEnvironment = generator.fromEquirectangular(hdr); }
+    finally { hdr.dispose(); generator.dispose(); }
+    applyRealismQuality();
+  })());
+  jobs.push((async () => {
+    const gltf = await new GLTFLoader().loadAsync('assets/models/lounge-chair.glb');
+    const bounds = new THREE.Box3().setFromObject(gltf.scene), size = bounds.getSize(new THREE.Vector3());
+    // Keep the existing seating footprint. All clones share geometry and texture storage.
+    const scale = .82 / Math.max(size.x, size.z), center = bounds.getCenter(new THREE.Vector3());
+    for (const item of assetReplacements) {
+      const model = gltf.scene.clone(true); model.scale.setScalar(scale);
+      model.position.set(-center.x*scale,-bounds.min.y*scale,-center.z*scale);
+      model.traverse(mesh => { if (mesh.isMesh) {
+        mesh.castShadow = mesh.receiveShadow = true;
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        materials.forEach(m => importedMaterials.add(m));
+      }});
+      item.holder.add(model); item.model = model;
+    }
+    applyRealismQuality(); renderer.shadowMap.needsUpdate = true;
+  })());
+  jobs.push((async () => {
+    const gltf = await new GLTFLoader().loadAsync('assets/models/office-head.glb');
+    gltf.scene.traverse(mesh => { if(mesh.isMesh && !mesh.geometry.attributes.uv) mesh.geometry.setAttribute('uv',new THREE.Float32BufferAttribute(new Float32Array(mesh.geometry.attributes.position.count*2),2)); });
+    mergeStaticChildren(gltf.scene);
+    const skinVariants = new Map();
+    for (const item of faceReplacements) {
+      const model = gltf.scene.clone(true);
+      model.traverse(mesh => { if (mesh.isMesh) {
+        if(mesh.material.name === 'skin') {
+          if(!skinVariants.has(item.agent.skin)) {
+            const skin=mesh.material.clone(); skin.color.set(item.agent.skin); skin.roughness=.64;
+            skinVariants.set(item.agent.skin,skin); importedMaterials.add(skin);
+          }
+          mesh.material=skinVariants.get(item.agent.skin);
+        } else importedMaterials.add(mesh.material);
+        mesh.castShadow=mesh.receiveShadow=true; mesh.userData.agent=item.agent;
+      }});
+      item.holder.add(model); item.model=model;
+    }
+    applyRealismQuality(); renderer.shadowMap.needsUpdate = true;
+  })());
+  const results = await Promise.allSettled(jobs.map(promise => promise.finally(() => { completed++; progress(); })));
+  const failed = results.filter(result => result.status === 'rejected');
+  if(failed.length) {
+    status.textContent = 'Ayrim detallar yuklanmadi; asosiy ofis ishlayapti. Yangilash uchun Ctrl+F5.';
+    failed.forEach(result => console.warn('Optional realism asset:', result.reason));
+  } else { status.hidden = true; }
+}
+
 function setQuality(index) {
   qualityIndex = index;
   const q = QUALITY[index];
   if (q.bloom) ensureComposer();
+  if (ambientOcclusion) ambientOcclusion.enabled = index === 2;
+  areaLights.forEach(light => light.visible = index === 2);
+  applyRealismQuality();
+  if (index > 0) loadRealismAssets();
   sun.shadow.mapSize.set(q.shadow, q.shadow);
   if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
   renderer.shadowMap.needsUpdate = true; shadowElapsed = 1;
@@ -1518,7 +1693,7 @@ function batchFurniture() {
   const batches = new Map();
   office.traverse(mesh => {
     if (!mesh.isMesh || mesh.isInstancedMesh || mesh === holo || (mesh.material.map && !mesh.material.userData.procedural) || mesh.material.transparent || mesh.material.wireframe) return;
-    for (let p = mesh.parent; p; p = p.parent) if (p === ceiling) return;
+    for (let p = mesh.parent; p; p = p.parent) if (p === ceiling || p.userData.assetFallback) return;
     const key = `${mesh.material.uuid}:${mesh.castShadow}:${mesh.receiveShadow}`;
     if (!batches.has(key)) batches.set(key, []);
     batches.get(key).push(mesh);
@@ -1585,6 +1760,8 @@ function frame() {
   rim.intensity = lerp(0.65, 0.22, nightT);
   if (bloom) bloom.strength = lerp(0.22, 0.34, nightT);
   for (const l of roomLights) l.intensity = lerp(7, 17, nightT);
+  for (const light of areaLights) light.intensity = lerp(1.4, 3.2, nightT);
+  for (const material of importedMaterials) material.envMapIntensity = lerp(.45, .10, nightT);
   for (const b of streetLamps) b.material.emissiveIntensity = nightT * 2;
   renderer.toneMappingExposure = lerp(1.0, 1.15, nightT);
 
