@@ -335,6 +335,7 @@ const ROOMS = {
   meeting:  { name: 'MAJLISLAR XONASI',  sub: 'Reja va strategiya',       x1: 10,  z1: -14, x2: 20, z2: -5, floor: 0x93765b },
   server:   { name: 'SERVER XONASI',     sub: 'Hammasi shu yerda ishlaydi', x1: 10, z1: -5, x2: 20, z2: 2,  floor: 0xb8c1cb },
 };
+ROOMS.director = { name: 'KREATIV DIREKTOR', sub: 'Jaka · Shaxsiy kabinet', x1:20, z1:-4, x2:31, z2:7, floor:0xa58c6c };
 function roomAt(x, z) {
   for (const k in ROOMS) { const r = ROOMS[k]; if (x >= r.x1 && x <= r.x2 && z >= r.z1 && z <= r.z2) return r; }
   return null;
@@ -351,7 +352,7 @@ const office = new THREE.Group(); scene.add(office);
   box(scene, 3.2, 0.03, 7.5, 0xbfbab1, 0, 0, 17.8, 0, false);              // kirish yo'lakchasi
   box(scene, 44, 0.04, 2, 0xbfbab1, 0, 0, 15, 0, false);
   // daraxtlar
-  const trees = [[-26, -10], [-27, 2], [-25, 12], [26, -8], [27, 4], [25, 13], [-12, 19], [12, 19], [-20, 19], [20, 19], [-8, -19], [6, -20], [18, -18], [-22, -18]];
+  const trees = [[-26, -10], [-27, 2], [-25, 12], [26, -8], [34, 4], [25, 13], [-12, 19], [12, 19], [-20, 19], [20, 19], [-8, -19], [6, -20], [18, -18], [-22, -18]];
   for (const [x, z] of trees) {
     const s = rnd(0.8, 1.3);
     cyl(scene, 0.15 * s, 0.22 * s, 1.6 * s, 0x6b4a2f, x, 0.8 * s, z, 8);
@@ -372,7 +373,7 @@ const office = new THREE.Group(); scene.add(office);
 // pollar
 for (const k in ROOMS) {
   const r = ROOMS[k];
-  box(office, r.x2 - r.x1, 0.06, r.z2 - r.z1, surface(['work', 'lounge', 'meeting'].includes(k) ? 'wood' : 'concrete', r.floor, ['work', 'lounge', 'meeting'].includes(k) ? 7 : 4), (r.x1 + r.x2) / 2, 0.03, (r.z1 + r.z2) / 2, 0, false);
+  box(office, r.x2 - r.x1, 0.06, r.z2 - r.z1, surface(['work', 'lounge', 'meeting', 'director'].includes(k) ? 'wood' : 'concrete', r.floor, ['work', 'lounge', 'meeting', 'director'].includes(k) ? 7 : 4), (r.x1 + r.x2) / 2, 0.03, (r.z1 + r.z2) / 2, 0, false);
 }
 box(office, 40.6, 0.3, 28.6, 0x9a958c, 0, -0.14, 0, 0, false); // poydevor
 
@@ -421,7 +422,10 @@ function wall(x1, z1, x2, z2, gaps = [], type = 'solid') {
 wall(-20, -14, 20, -14, [], 'window');
 wall(-20, 14, 20, 14, [[-1.6, 1.6]], 'window');
 wall(-20, -14, -20, 14, [], 'window');
-wall(20, -14, 20, 14, [], 'window');
+wall(20, -14, 20, 14, [[3, 5]], 'window');
+wall(20,-4,31,-4,[], 'window');
+wall(31,-4,31,7,[], 'window');
+wall(20,7,31,7);
 wall(-20, 6, 20, 6, [[-14.5, -12.5], [-6, -4.2], [4.2, 6], [12.5, 14.5]]);
 wall(-20, 2, -8, 2, [[-15, -13]]);
 wall(-8, 2, 10, 2, [[-1.5, 1.5]], 'glass');
@@ -432,7 +436,7 @@ wall(-8, -14, -8, 2, [[-6, -4]]);
 wall(10, -14, 10, -5, [[-9, -7.5]], 'glass');
 wall(10, -5, 10, 2);
 wall(10, -5, 20, -5);
-// yurish rejimida faqat devorlar to'sadi (jihozlar orasidan yurish erkinroq)
+// Legacy wall grid retained for navigation checks; player collision uses actual furniture bounds.
 const wallGrid = new Uint8Array(blocked);
 // kirish eshigi (shisha, ochiq)
 box(office, 1.5, 2.6, 0.06, glassMat, -2.3, 1.3, 14.6, -0.6, false);
@@ -760,13 +764,16 @@ const lampMetal = mat(0x30343a,{metalness:.75,roughness:.32});
 // Exterior bands and window blinds: decoration only, no changes to navigation cells.
 for (const z of [-13.84,13.84]) {
   for (let x=-19;x<=19;x+=2) {
+    if(z>0&&Math.abs(x)<2)continue; // Keep the entrance free of decorative blinds.
     for (let y=1.05;y<2.5;y+=.23) box(office,1.8,.035,.065,mat(0xbab2a4,{roughness:.7}),x,y,z,0,true);
   }
-  box(office,39.8,.12,.07,trim,0,.15,z);
+  if(z>0) {for(const side of [-1,1])box(office,18.3,.12,.07,trim,side*10.75,.15,z);}
+  else box(office,39.8,.12,.07,trim,0,.15,z);
   box(office,39.8,.10,.08,trim,0,2.86,z);
 }
 for (const x of [-19.84,19.84]) {
-  box(office,.07,.12,27.6,trim,x,.15,0);
+  if(x>0) {box(office,.07,.12,16.8,trim,x,.15,-5.4);box(office,.07,.12,8.8,trim,x,.15,9.4);}
+  else box(office,.07,.12,27.6,trim,x,.15,0);
   box(office,.07,.10,27.6,trim,x,2.86,0);
 }
 // Corridor skirting follows the same existing wall segments and door gaps.
@@ -796,6 +803,32 @@ box(office,.018,.24,.26,mat(0x94a0a8,{metalness:.85,roughness:.25}),19.285,1.25,
 for(const z of [7.94,8.06]) cyl(office,.014,.014,.1,lampMetal,19.26,1.11,z,6);
 box(office,.015,.055,.08,mat(0x42a1c1,{emissive:0x42a1c1,emissiveIntensity:.8}),19.27,1.39,8,0,false);
 
+// ---------------------------------------------------------------- direktor kabineti
+const directorSeat = desk(27,-2,0,SCREENS.chart,{wide:true,color:0xc4a681,chair:0x1d2936,monitors:2});
+const directorSpawn = new THREE.Vector3(26,0,3.7);
+{
+  box(office,11.4,.30,11.4,0x9a958c,25.5,-.14,1.5,0,false);
+  const roof=box(ceiling,11,.08,11,0xeeeae1,25.5,3.04,1.5,0,false);
+  box(ceiling,4,.025,.65,mat(0xffedca,{emissive:0xffedca,emissiveIntensity:1.3}),26,2.98,1.2,0,false);
+  shelf(23,-3.65,0,3.6);
+  sofa(21.05,.15,Math.PI/2,2.6,0x263c49);
+  const table=softBox(office,1,.38,1.4,surface('wood',0x8b6748),22.5,.25,.15);
+  blockObj(table,.08);mug(office,22.4,.49,.2);
+  const rug=box(office,4,.012,3.5,surface('fabric',0x78827b,3),22.8,.072,.1,0,false);
+  plant(30.2,-3.1,.9);plant(30.2,6.2,1.1);
+  sign(office,'KREATIV DIREKTOR',3.7,.65,26,2.20,6.85,Math.PI,{bg:'#162832',fg:'#e3c894',sub:'JAKA · CREATIVE OFFICE',glow:.12});
+  sign(office,'G‘OYA → REJA → NATIJA',2.5,1.4,30.86,1.8,2.1,-Math.PI/2,{bg:'#e5e1d7',fg:'#243944',sub:'KONTENT  /  DIZAYN  /  STRATEGIYA',glow:.03});
+  sign(office,'JAKA',.58,.18,27,.89,-1.02,0,{bg:'#172632',fg:'#e1c588',sub:'Kreativ direktor',glow:.1});
+  sign(office,'DIREKTOR',1.25,.3,19.85,2.2,4,-Math.PI/2,{bg:'#172632',fg:'#e1c588',glow:.1});
+  // Guest chairs face the executive desk, leaving a broad route from the corridor.
+  officeChair(office,26.35,.25,Math.PI,0x5b625d);officeChair(office,27.65,.25,Math.PI,0x5b625d);
+  const console=softBox(office,2,.72,.50,surface('wood',0xa77d53),29.7,.42,5.9);
+  blockObj(console,.06);mug(office,29.1,.85,5.9);mug(office,29.4,.85,5.9);
+  softBox(office,.35,.4,.32,0x1e252b,30.2,1.02,5.9);
+  cyl(office,.035,.045,.25,mat(0xc1a068,{metalness:.75,roughness:.25}),24.0,1.98,-3.62,12);
+  sphere(office,.13,mat(0xc1a068,{metalness:.75,roughness:.25}),24,2.18,-3.62,2);
+}
+
 // ---------------------------------------------------------------- xonalar chiroqlari
 const roomLights = [];
 for (const k of ['studio', 'lobby', 'lounge', 'hq', 'meeting', 'server', 'corridor']) {
@@ -804,6 +837,9 @@ for (const k of ['studio', 'lobby', 'lounge', 'hq', 'meeting', 'server', 'corrid
   l.position.set((r.x1 + r.x2) / 2, 2.8, (r.z1 + r.z2) / 2); scene.add(l); roomLights.push(l);
 }
 for (const x of [-4, 1, 6]) { const l = new THREE.PointLight(0xfff1dc, 6, 18, 1.6); l.position.set(x, 2.8, -6); scene.add(l); roomLights.push(l); }
+
+// One shadow-free light for the new office; no additional shadow render pass.
+const directorLamp=new THREE.PointLight(0xffdfb0,9,15,2);directorLamp.position.set(26,2.65,1.5);scene.add(directorLamp);
 
 // ---------------------------------------------------------------- jamoa
 const SKINS = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac, 0xd7a07a];
@@ -988,11 +1024,10 @@ function buildParking() {
   }
   // Perimeter planting keeps car bays and the building entrance clear.
   for(let i=0;i<26;i++) {
-    const x=i<13?-29:29,z=-17+(i%13)*5.6;
+    const z=-17+(i%13)*5.6, x=i<13?-29:(z>-5&&z<8?34:29);
     cyl(parking,.12,.20,1.5,0x5d4736,x,.75,z,7);
     for(let level=0;level<3;level++)cyl(parking,0,1.2-level*.22,2.1,mat(level%2?0x395348:0x2a4239,{roughness:1}),x,1.7+level*.72,z,7);
   }
-  batchExterior();
 }
 function batchExterior() {
   parking.updateMatrixWorld(true);
@@ -1045,10 +1080,11 @@ function mergeStaticChildren(group) {
 const agents = [];
 class Agent {
   constructor(def, home) {
+    this.index = def.player ? TEAM.length : TEAM.indexOf(def);
     this.def = def; this.home = home; if (home) home.taken = this;
     this.root = new THREE.Group(); this.body = new THREE.Group(); this.root.add(this.body);
-    this.root.scale.setScalar(.96 + (TEAM.indexOf(def) % 5) * .016);
-    this.skin = SKINS[TEAM.indexOf(def) % SKINS.length]; this.hairColor = HAIRS[(TEAM.indexOf(def) * 5 + 1) % HAIRS.length];
+    this.root.scale.setScalar(.96 + (this.index % 5) * .016);
+    this.skin = SKINS[this.index % SKINS.length]; this.hairColor = HAIRS[(this.index * 5 + 1) % HAIRS.length];
     this.build(); scene.add(this.root);
     this.spot = null; this.path = null; this.pi = 0; this.pose = 'stand'; this.act = 'idle';
     this.yaw = 0; this.yawT = 0; this.phase = Math.random() * 6; this.speed = rnd(1.15, 1.5);
@@ -1059,7 +1095,7 @@ class Agent {
     if (def.cleaner) { this.state = 'idle'; this.timer = 0; }
   }
   build() {
-    const d=this.def, B=this.body, index=TEAM.indexOf(d);
+    const d=this.def, B=this.body, index=this.index;
     const skin=mat(this.skin,{roughness:.7,metalness:0});
     const hair=mat(this.hairColor,{roughness:.86,metalness:0});
     const clothColor=new THREE.Color(d.color).lerp(new THREE.Color(0x657079),.18);
@@ -1096,7 +1132,7 @@ class Agent {
       polygon(B,[[-.065,1.43,.13],[-.025,1.20,.15],[.025,1.20,.15],[.065,1.43,.13]],cream);
       const lapel=shirt;
       for(const side of [-1,1]) polygon(B,[[side*.052,1.44,.103],[side*.145,1.33,.144],[side*.063,1.19,.15],[side*.081,1.31,.15]],lapel);
-      if(index%3===0||d.role==='Bosh agent') {softBox(B,.026,.17,.008,mat(d.color,{roughness:.65}),0,1.30,.147);}
+      if(index%3===0||d.role==='Bosh agent') {softBox(B,.026,.17,.008,mat(d.player?0xc4a16b:d.color,{roughness:.65}),0,1.30,.147);}
     }
     for(let y=1.05;y<1.35;y+=.1) oval(B,.008,.008,.005,0xb3b7b5,.015,y,.143);
     if(d.acc==='vest') {
@@ -1343,6 +1379,133 @@ for (const def of TEAM) {
   agents.push(new Agent(def, home));
 }
 
+// Player uses the same articulated body but never joins autonomous agent decisions.
+const DIRECTOR = {name:'Jaka',role:'Kreativ direktor',player:true,color:0x172b40,hair:'short',tasks:['Ofisni boshqarish'],tools:[]};
+const director = new Agent(DIRECTOR,null);
+director.root.position.copy(directorSpawn);director.yaw=director.yawT=Math.PI;director.root.rotation.y=Math.PI;director.state='player';director.pose='stand';director.act='idle';
+director.setStatus('Siz · Kreativ direktor');
+const player = {view:'third',seated:false,returnPosition:null,radius:.34,clock:0};
+
+// Static spatial hash is separate from the NPC A* grid. It includes desks and screens.
+const collisionCells = new Map(), staticColliders = [], COLLISION_CELL = 2;
+function eachCollisionCell(x1,z1,x2,z2,visit) {
+  for(let x=Math.floor(x1/COLLISION_CELL);x<=Math.floor(x2/COLLISION_CELL);x++)
+    for(let z=Math.floor(z1/COLLISION_CELL);z<=Math.floor(z2/COLLISION_CELL);z++)visit(`${x},${z}`);
+}
+function addPlayerCollider(bounds) {
+  const entry={box:bounds.clone(),cameraBox:bounds.clone().expandByScalar(.16)};
+  staticColliders.push(entry);
+  eachCollisionCell(bounds.min.x-.2,bounds.min.z-.2,bounds.max.x+.2,bounds.max.z+.2,key=>{
+    if(!collisionCells.has(key))collisionCells.set(key,[]);collisionCells.get(key).push(entry);
+  });
+}
+function rebuildPlayerCollision() {
+  collisionCells.clear();staticColliders.length=0;scene.updateMatrixWorld(true);
+  scene.traverse(mesh=>{
+    if(!mesh.isMesh||mesh.isInstancedMesh||mesh.material?.isShaderMaterial||mesh.material?.wireframe)return;
+    for(let parent=mesh;parent;parent=parent.parent)if(parent===director.root||agents.some(a=>a.root===parent))return;
+    const bounds=new THREE.Box3().setFromObject(mesh);
+    if(bounds.max.y<=.18||bounds.min.y>3.5||bounds.isEmpty())return;
+    addPlayerCollider(bounds);
+  });
+  // Loaded armchairs have a larger footprint than the low-quality puffs. Reserve it before either loads.
+  for(const item of assetReplacements) {
+    const p=item.holder.position;
+    addPlayerCollider(new THREE.Box3(new THREE.Vector3(p.x-.43,0,p.z-.43),new THREE.Vector3(p.x+.43,.95,p.z+.43)));
+  }
+}
+function nearbyColliders(x1,z1,x2,z2) {
+  const found=new Set();eachCollisionCell(x1,z1,x2,z2,key=>{for(const box of collisionCells.get(key)||[])found.add(box);});return found;
+}
+function canPlayerStand(x,z) {
+  const r=player.radius;
+  const outdoors=x>=-27+r&&x<=27-r&&z>=-16+r&&z<=51-r;
+  const cabinet=x>=20&&x<=31-r&&z>=-4+r&&z<=7-r;
+  if(!outdoors&&!cabinet)return false;
+  for(const entry of nearbyColliders(x-r,z-r,x+r,z+r)) {
+    const b=entry.box;if(b.min.y>=1.82||b.max.y<=.18)continue;
+    const dx=x-Math.max(b.min.x,Math.min(x,b.max.x)),dz=z-Math.max(b.min.z,Math.min(z,b.max.z));
+    if(dx*dx+dz*dz<r*r-1e-8)return false;
+  }
+  return true;
+}
+function movePlayer(dx,dz) {
+  const p=director.root.position,steps=Math.max(1,Math.ceil(Math.hypot(dx,dz)/.075));
+  for(let i=0;i<steps;i++) {
+    if(canPlayerStand(p.x+dx/steps,p.z))p.x+=dx/steps;
+    if(canPlayerStand(p.x,p.z+dz/steps))p.z+=dz/steps;
+  }
+}
+const playerCameraRay=new THREE.Ray(), playerCameraHit=new THREE.Vector3();
+function safePlayerCamera(target,desired) {
+  const direction=desired.clone().sub(target),distance=direction.length();if(distance<.001)return target.clone();
+  direction.divideScalar(distance);playerCameraRay.set(target,direction);let safe=distance;
+  for(const item of nearbyColliders(Math.min(target.x,desired.x)-.2,Math.min(target.z,desired.z)-.2,Math.max(target.x,desired.x)+.2,Math.max(target.z,desired.z)+.2)) {
+    if(item.cameraBox.containsPoint(target))continue;
+    if(playerCameraRay.intersectBox(item.cameraBox,playerCameraHit))safe=Math.min(safe,Math.max(.05,target.distanceTo(playerCameraHit)-.06));
+  }
+  return target.clone().addScaledVector(direction,safe);
+}
+function standDirector() {
+  if(!player.seated)return true;
+  const candidates=[player.returnPosition,new THREE.Vector3(25.6,0,-2),new THREE.Vector3(28.4,0,-2),directorSpawn];
+  const spot=candidates.find(p=>p&&canPlayerStand(p.x,p.z));if(!spot)return false;
+  director.root.position.copy(spot);director.pose='stand';director.act='idle';player.seated=false;return true;
+}
+function useDirectorDesk() {
+  if(mode!=='walk')return;
+  if(player.seated){standDirector();return;}
+  const p=director.root.position;
+  if(Math.hypot(p.x-directorSeat.x,p.z-directorSeat.z)>1.25)return;
+  player.returnPosition=p.clone();p.set(directorSeat.x,0,directorSeat.z);
+  director.pose='sit';director.seatY=directorSeat.seatY;director.act='type';director.yaw=director.yawT=directorSeat.face;
+  player.seated=true;walk.yaw=directorSeat.face-Math.PI;
+}
+function enterDirector(view=player.view) {
+  player.view=view;setMode('walk');
+}
+function togglePlayerView(){enterDirector(player.view==='third'?'first':'third');}
+function goToDirectorOffice(){standDirector();director.root.position.copy(directorSpawn);director.yaw=director.yawT=Math.PI;walk.yaw=0;walk.pitch=-.05;enterDirector();}
+function updateDirector(delta) {
+  const dt=Math.min(delta,.1),p=director.root.position;player.clock+=dt;
+  let moved=0;
+  if(mode==='walk') {
+    const keys=walk.keys;
+    let forward=(keys.KeyW||keys.ArrowUp?1:0)-(keys.KeyS||keys.ArrowDown?1:0);
+    let right=(keys.KeyD||keys.ArrowRight?1:0)-(keys.KeyA||keys.ArrowLeft?1:0);
+    const length=Math.hypot(forward,right);
+    if(length&&standDirector()) {
+      forward/=length;right/=length;
+      const step=(keys.ShiftLeft||keys.ShiftRight?4:2.2)*dt,oldX=p.x,oldZ=p.z;
+      movePlayer((-Math.sin(walk.yaw)*forward+Math.cos(walk.yaw)*right)*step,(-Math.cos(walk.yaw)*forward-Math.sin(walk.yaw)*right)*step);
+      moved=Math.hypot(p.x-oldX,p.z-oldZ);
+      if(moved>.0001)director.yawT=player.view==='first'?walk.yaw+Math.PI:Math.atan2(p.x-oldX,p.z-oldZ);
+    }
+    if(!player.seated) {director.pose=moved>.0001?'walk':'stand';director.act='idle';director.speed=moved/Math.max(dt,.001);}
+    const viewButton=document.getElementById('bView'),viewText=player.view==='first'?'1-shaxs · F':'3-shaxs · F';
+    if(viewButton.textContent!==viewText)viewButton.textContent=viewText;
+    const near=Math.hypot(p.x-directorSeat.x,p.z-directorSeat.z)<1.25;
+    const help=document.getElementById('help'),hint=`WASD — yurish · torting — qarash · F — ko‘rinish · B — kabinet${player.seated?' · E — turish':near?' · E — stolga o‘tirish':''}`;
+    if(help.textContent!==hint)help.textContent=hint;
+  } else if(!player.seated){director.pose='stand';director.act='idle';}
+  director.update(dt,player.clock);
+  director.label.visible=ui.labels&&mode!=='walk';
+  director.root.visible=true;
+  if(mode==='walk') {
+    if(player.view==='first') {
+      director.root.visible=false;
+      camera.position.set(p.x,player.seated?directorSeat.seatY+1:1.65,p.z);
+      camera.rotation.order='YXZ';camera.rotation.set(walk.pitch,walk.yaw,0);
+    } else {
+      const target=new THREE.Vector3(p.x,player.seated?.95:1.28,p.z);
+      const distance=3.15,up=Math.max(.35,Math.min(1.45,.9-walk.pitch*1.3));
+      const desired=new THREE.Vector3(p.x+Math.sin(walk.yaw)*distance,target.y+up,p.z+Math.cos(walk.yaw)*distance);
+      camera.position.copy(safePlayerCamera(target,desired));camera.lookAt(target);
+      director.root.visible=camera.position.distanceTo(target)>.65;
+    }
+  }
+}
+
 // ---------------------------------------------------------------- yig'ilish va ruxsatlar
 const meeting = { active: false, end: 0, next: 70 };
 const approvals = [];
@@ -1402,7 +1565,10 @@ Object.assign(ui, {
   agList: document.getElementById('agList'),
   build() {
     document.getElementById('brand').innerHTML = OFFICE_NAME.replace(/^(\S+)/, '<b>$1</b>');
-    document.getElementById('sAgents').textContent = agents.length;
+    document.getElementById('sAgents').textContent = `${agents.length} + siz`;
+    document.getElementById('bDirector').onclick=()=>enterDirector();
+    document.getElementById('bView').onclick=togglePlayerView;
+    document.getElementById('bOffice').onclick=goToDirectorOffice;
     this.agList.innerHTML = agents.map((a, i) => `<div class="ag" data-i="${i}"><i style="background:#${new THREE.Color(a.def.color).getHexString()}"></i><div><b>${a.def.name} · ${a.def.role}</b><small></small></div></div>`).join('');
     this.agList.querySelectorAll('.ag').forEach((el) => el.onclick = () => followAgent(agents[+el.dataset.i]));
   },
@@ -1471,7 +1637,9 @@ function setMode(m) {
   ceiling.visible = m === 'walk' || m === 'follow';
   if (m !== 'tour') { capEl.classList.remove('show'); }
   if (m === 'orbit') { orbit.target.set(0, 0, -1); camera.position.set(0, 30, 32); followed = null; }
-  if (m === 'walk') { camera.position.set(0, 1.65, 13.2); walk.yaw = 0; walk.pitch = -0.05; followed = null; }
+  walk.keys = {};
+  if (m === 'walk') { followed = null; }
+  director.root.visible = m !== 'walk' || player.view === 'third';
   if (m === 'follow' && !followed) followed = pick(agents.filter((a) => a.state === 'working')) || agents[1];
   if (m === 'tour') { tour.i = -1; followed = null; nextShot(); }
   ui.dirty = true;
@@ -1482,7 +1650,7 @@ document.querySelectorAll('[data-mode]').forEach((b) => b.onclick = () => setMod
 let night = false, nightT = 0;
 function toggleNight() { simMin = night ? Math.ceil(simMin / 1440) * 1440 + 9 * 60 : Math.floor(simMin / 1440) * 1440 + 20 * 60; }
 document.getElementById('bNight').onclick = toggleNight;
-function toggleLabels() { ui.labels = !ui.labels; agents.forEach((a) => a.label.visible = ui.labels); document.getElementById('bLabels').classList.toggle('on', ui.labels); }
+function toggleLabels() { ui.labels = !ui.labels; director.label.visible=ui.labels; agents.forEach((a) => a.label.visible = ui.labels); document.getElementById('bLabels').classList.toggle('on', ui.labels); }
 document.getElementById('bLabels').onclick = toggleLabels;
 function cycleSpeed() { speed = speed >= 4 ? 1 : speed * 2; document.getElementById('bSpeed').textContent = `Tezlik ${speed}x`; }
 document.getElementById('bSpeed').onclick = cycleSpeed;
@@ -1495,6 +1663,10 @@ addEventListener('keydown', (e) => {
   walk.keys[e.code] = true;
   if (e.target.tagName === 'INPUT') return;
   const k = e.key.toLowerCase();
+  if (k === 'f' && !e.repeat) togglePlayerView();
+  if (k === '5' && !e.repeat) enterDirector();
+  if (k === 'b' && !e.repeat) goToDirectorOffice();
+  if (k === 'e' && !e.repeat) useDirectorDesk();
   if (k === 'q' && !e.repeat) cycleQuality();
   if (k === 'p' && !e.repeat) showParking();
   if (k === '1') setMode('orbit'); if (k === '2') setMode('walk'); if (k === '3') setMode('follow'); if (k === '4') setMode('tour');
@@ -1505,6 +1677,8 @@ addEventListener('keydown', (e) => {
   if (mode === 'follow' && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) { const i = agents.indexOf(followed); followed = agents[(i + (e.key === 'ArrowRight' ? 1 : agents.length - 1)) % agents.length]; ui.dirty = true; }
 });
 addEventListener('keyup', (e) => { walk.keys[e.code] = false; });
+addEventListener('blur',()=>{walk.keys={};down=null;});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){walk.keys={};down=null;}});
 
 // sichqoncha: yurish rejimida qarash, bosish orqali agentni tanlash
 const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
@@ -1516,7 +1690,7 @@ addEventListener('pointermove', (e) => {
   down.lx = e.clientX; down.ly = e.clientY;
 });
 addEventListener('pointerup', (e) => {
-  if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 5 && e.target === canvas) {
+  if (mode !== 'walk' && down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 5 && e.target === canvas) {
     const r = canvas.getBoundingClientRect(); ndc.set((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1);
     ray.setFromCamera(ndc, camera);
     const hit = ray.intersectObjects(agents.map((a) => a.root), true).find((h) => h.object.userData.agent);
@@ -1652,6 +1826,7 @@ function setQuality(index) {
   const roomBudget = index === 2 ? 6 : 3, streetBudget = index === 2 ? 4 : 2;
   roomLights.forEach((light, i) => light.visible = q.lights && i % Math.ceil(roomLights.length / roomBudget) === 0);
   streetLights.forEach((light, i) => light.visible = q.lights && i % Math.ceil(streetLights.length / streetBudget) === 0);
+  directorLamp.visible = q.lights;
   parkingLabels.forEach(l => l.visible = index > 0);
   document.getElementById('bQuality').innerHTML = `Sifat: ${q.name}<kbd>Q</kbd>`;
   document.getElementById('bQuality').setAttribute('aria-label', `Grafik sifat: ${q.name}. Almashtirish`);
@@ -1761,6 +1936,7 @@ function frame() {
   rim.intensity = lerp(0.65, 0.22, nightT);
   if (bloom) bloom.strength = lerp(0.22, 0.34, nightT);
   for (const l of roomLights) l.intensity = lerp(7, 17, nightT);
+  directorLamp.intensity = lerp(9,16,nightT);
   for (const material of importedMaterials) material.envMapIntensity = lerp(.45, .10, nightT);
   for (const b of streetLamps) b.material.emissiveIntensity = nightT * 2;
   renderer.toneMappingExposure = lerp(1.0, 1.15, nightT);
@@ -1776,17 +1952,7 @@ function frame() {
 
   // kamera
   if (mode === 'orbit') orbit.update();
-  else if (mode === 'walk') {
-    const k = walk.keys, sp = (k.ShiftLeft || k.ShiftRight ? 5 : 2.4) * rdt;
-    let mx = 0, mz = 0;
-    if (k.KeyW || k.ArrowUp) mz += 1; if (k.KeyS || k.ArrowDown) mz -= 1; if (k.KeyA || k.ArrowLeft) mx -= 1; if (k.KeyD || k.ArrowRight) mx += 1;
-    const fx = -Math.sin(walk.yaw), fz = -Math.cos(walk.yaw), rx = Math.cos(walk.yaw), rz = -Math.sin(walk.yaw);
-    const nx = camera.position.x + (fx * mz + rx * mx) * sp, nz = camera.position.z + (fz * mz + rz * mx) * sp;
-    const free = (x, z) => !isBlockedWall(x, z);
-    if (free(nx, camera.position.z)) camera.position.x = nx;
-    if (free(camera.position.x, nz)) camera.position.z = nz;
-    camera.rotation.order = 'YXZ'; camera.rotation.set(walk.pitch, walk.yaw, 0);
-  } else if (mode === 'follow' && followed) {
+  else if (mode === 'walk') { /* Player movement and camera handled together below. */ } else if (mode === 'follow' && followed) {
     // o'tirganda stul suyanchig'i to'smasligi uchun kamera yonroqqa va balandroqqa o'tadi
     const p = followed.root.position, y = followed.yaw, sit = followed.pose === 'sit';
     const back = sit ? 1.9 : 2.6, side = sit ? 1.7 : 0.9;
@@ -1807,6 +1973,8 @@ function frame() {
     }
     if (tour.t > SHOT_LEN) nextShot();
   }
+
+  updateDirector(rdt);
 
   // nomlar: yuqoridan qaraganda kattaroq bo'lsin
   const far = mode === 'orbit' ? Math.min(3, Math.max(1, camera.position.distanceTo(orbit.target) / 14)) : 1;
@@ -1841,12 +2009,14 @@ function isBlockedWall(x, z) {
 }
 
 buildParking();
+rebuildPlayerCollision();
+batchExterior();
 batchFurniture();
 ui.build();
 setQuality(qualityIndex);
 log(`🏢 ${OFFICE_NAME} ochildi. ${agents.length} ta agent ishga tushdi`, 'ev');
 drawHQ();
 resize();
-setMode('orbit');
+enterDirector('third');
 document.getElementById('loading').remove();
 frame();

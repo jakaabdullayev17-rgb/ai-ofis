@@ -1,6 +1,6 @@
 # AI Ofis · Realism Edition
 
-Three.js 0.160.0 bilan ishlaydigan 3D ofis: 8 xona, 24 personaj,
+Three.js 0.160.0 bilan ishlaydigan 3D ofis: 9 xona, 24 AI xodim va siz boshqaradigan direktor,
 24 avtomobilli avtoturargoh. Procedural sahna mahalliy PBR teksturalar, HDR va GLB
 modellari bilan boyitilgan. Fotorealistik yoki video bilan 1:1 nusxa deb hisoblanmaydi.
 
@@ -23,7 +23,10 @@ GitHub Pages uchun `assets/` papkasini ham yuklash shart. Manbalar va litsenziya
 | Tugma | Vazifa |
 |---|---|
 | 1 | Ofisni umumiy ko'rish, sichqoncha bilan aylantirish / yaqinlashtirish |
-| 2 | Piyoda yurish: WASD, sichqonchani tortib qarash, Shift — tezroq |
+| 2 yoki 5 | Direktor sifatida yurish: WASD, sichqonchani tortib qarash, Shift — tezroq |
+| F | Direktorning 1-shaxs / 3-shaxs kamerasini almashtirish |
+| B | Shaxsiy kabinetga qaytish |
+| E | O‘z ish stuliga yaqin joyda o‘tirish / turish |
 | 3 | Agentni kuzatish; chap/o'ng strelka — keyingi agent |
 | 4 | Kino: ofis, personajlar va avtoturargoh bo'ylab kamera sayohati |
 | P | Avtoturargohni ko'rish |
@@ -38,6 +41,33 @@ GitHub Pages uchun `assets/` papkasini ham yuklash shart. Manbalar va litsenziya
 Ofis nomi: `?nom=Mening%20Ofisim`. Sifat: `?quality=low`, `?quality=medium`,
 `?quality=high`. Birga: `?nom=Mening%20Ofisim&quality=high`.
 Boshlang'ich vaqt 17:20 — iliq yorug'lik uchun. N bilan tun/kunga o'tiladi.
+
+## Boshqariladigan kreativ direktor
+
+Sayt Jaka direktor personajining uchinchi shaxs ko'rinishida ochiladi. To'q ko'k
+kostyum, shim va galstuk bilan qolgan personajlar uslubiga mos. Direktor TEAMga
+qo'shilmagan: original 24 AI agent ishlashda davom etadi, hisoblagich `24 + siz`.
+Direktor o'zicha vazifa bajarmaydi va tool-call jurnalini sun'iy ko'paytirmaydi.
+
+Yangi kabinet sharq tomonda, yo'lak oxiridagi ochiq eshik orqali ulanadi. Ichida
+ikki monitorli ish stoli, direktor va mehmon stullari, divan, kofe stoli,
+kitob javoni, o'simliklar, reja paneli, nom lavhasi va kofe burchagi bor.
+B bilan kabinetga qaytish mumkin; E ishlashi uchun ish stuliga 1.25 m gacha
+yaqinlashing. Stulda o'tirganda WASD ham turishga olib keladi.
+
+- Harakat kamera yo'nalishiga nisbatan; diagonal yurish tezroq emas.
+- Devor, stol, ekran, stul, avtomobil va boshqa statik jihozlar real geometriya
+  chegaralaridan olingan to'siqlarga ega. 0.34 m radiusli personaj kichik
+  qadamlar bilan siljiydi va chetlar bo'ylab sirg'aladi; yupqa devordan sakrab o'tmaydi.
+- To'siqlar statik fazoviy jadvalda; har kadrda butun 3D sahna tekshirilmaydi.
+- 3-shaxs kamerasi devor/jihozga tegsa yaqinlashadi. Juda tor joyda personaj
+  vaqtincha yashiriladi; 1-shaxsda o'z boshi kamera ichida ko'rinmaydi.
+- Kamera 1/3/4 rejimlari avvalgi umumiy/AI kuzatish/kino vazifalarini saqlaydi.
+  To'qnashuvlar siz boshqaradigan yurish rejimiga tegishli; kino kamera rejasi erkin.
+- Boshqa AI agentlar dinamik jismoniy to'siq emas. Ularning A* va ish mantiqi saqlangan.
+- Fokus yo'qolsa yoki tab yashirilsa, bosilgan yurish tugmalari tozalanadi.
+- Barcha to'qqiz xonaga kabinetdan piyoda yetib borish testi o'tgan. Testlar GPU
+  chizilishini almashtiradi; haqiqiy browser FPS va yakuniy ko'rinish alohida baholanadi.
 
 ## Qotishni kamaytirish yangilanishi
 
@@ -60,7 +90,7 @@ Boshlang'ich vaqt 17:20 — iliq yorug'lik uchun. N bilan tun/kunga o'tiladi.
 - Haqiqiy HDR panoramadan PMREM akslari. HDR faqat yoritish/aks uchun;
   tashqaridagi gradient osmon va kun/tun almashishi saqlanadi.
 - HDR postprocessing va bloom; og'ir SSAO/area light/MSAA keyingi optimizatsiyada olib tashlangan.
-- 24 personaj uchun birgalikda ishlatiladigan, silliq jag', burun, qovoq, quloq va
+- 24 AI personaj va direktor uchun birgalikda ishlatiladigan, silliq jag', burun, qovoq, quloq va
   lab detallari bor original GLB bosh. Bosh avvalgi animatsiya bo'g'iniga ulanadi;
   soch, aksessuar, kiyim rangi va agent shaxsi saqlanadi. To'liq humanoid skelet
   yoki motion-capture yurish hali qo'shilmagan.
@@ -120,12 +150,12 @@ yig'ilishlar va Enter tasdig'i saqlangan. Tashqarida piyoda yurish kengaytirilga
 avtomobil va soyabon ustunlari ichidan o'tish bloklanadi.
 
 Haqiqiy Three.js geometriyasi bilan test: 24 agent, 24 turli egali mashina,
-8 xona, Q/P/1–4/N/L/S/V/H, Enter, yig'ilish, A*, avtoturargoh kirishi va
+9 xona, Q/P/1–4/N/L/S/V/H, Enter, yig'ilish, A*, avtoturargoh kirishi va
 avtomobil to'qnashuvi; 1800 simulyatsiya kadri. Bu testda GPU renderi va
 Canvas chizish o'rniga test funksiyalari ishlatilgan.
 Modellar joylashuvi alohida offline 3D renderda ham ko'rib chiqilgan;
 u brauzer ranglari, teksturalari yoki FPSini tasdiqlamaydi.
-GLTFLoader bilan ikkala GLB va RGBELoader bilan HDR parse qilindi; 24 yuz/2 kreslo,
+GLTFLoader bilan ikkala GLB va RGBELoader bilan HDR parse qilindi; 25 yuz/2 kreslo,
 Q fallback va qayta yoqish tekshirildi. Tekshiruvda renderer va rasmlar chizilishi
 almashtirilgan: bu GPU yoki FPS testi emas. WebGL o'chirilgan tekshiruv muhiti
 sabab yakuniy brauzer tasviri va unumdorlik foydalanuvchi qurilmasida baholanadi.
