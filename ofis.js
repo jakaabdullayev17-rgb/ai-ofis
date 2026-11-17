@@ -8,18 +8,16 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
-import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
-import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // Q: past / o'rta / yuqori. Simulyatsiya tezligi sifatga bog'liq emas.
 const QUALITY = [
   { name: 'Past', dpr: 1, pixels: 1100000, shadow: 1024, bloom: false, lights: false, shadowHz: 20 },
-  { name: "O'rta", dpr: 1.25, pixels: 2300000, shadow: 2048, bloom: true, lights: true, shadowHz: 30 },
-  { name: 'Yuqori', dpr: 2, pixels: 8300000, shadow: 4096, bloom: true, lights: true, shadowHz: 60 },
+  { name: "O'rta", dpr: 1, pixels: 1500000, shadow: 1024, bloom: true, lights: true, shadowHz: 15 },
+  { name: 'Yuqori', dpr: 1.25, pixels: 2300000, shadow: 2048, bloom: true, lights: true, shadowHz: 20 },
 ];
 const qualityParam = new URLSearchParams(location.search).get('quality');
-let qualityIndex = ({ low: 0, medium: 1, high: 2 })[qualityParam] ?? (innerWidth > 1000 ? 2 : 1);
+let qualityIndex = ({ low: 0, medium: 1, high: 2 })[qualityParam] ?? 1;
 let renderScale = 1, shadowElapsed = 1, fpsTime = 0, fpsFrames = 0;
 
 // Ofis nomini URL orqali o'zgartirish mumkin: index.html?nom=Mening%20Ofisim
@@ -220,28 +218,14 @@ scene.add(sun);
 // Faqat quyosh soya chizadi; to'ldiruvchi chiroq qo'shimcha shadow pass talab qilmaydi.
 const rim = new THREE.DirectionalLight(0xa9d9ff, 0.65);
 rim.position.set(-18, 16, -20); scene.add(rim);
-let composer = null, bloom = null, ambientOcclusion = null;
+let composer = null, bloom = null;
 function ensureComposer() {
   if (composer) return;
-  // Half-float target preserves HDR highlights; WebGL2 MSAA keeps geometry edges clean.
+  // Preserve HDR highlights without a four-sample full-resolution render target.
   const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
-  target.samples = renderer.capabilities.isWebGL2 ? 4 : 0;
+  target.samples = 0;
   composer = new EffectComposer(renderer, target);
   composer.addPass(new RenderPass(scene, camera));
-  ambientOcclusion = new SSAOPass(scene, camera, 1, 1, 16);
-  ambientOcclusion.kernelRadius = .38;
-  ambientOcclusion.minDistance = .00002;
-  ambientOcclusion.maxDistance = .0025;
-  // Do not turn transparent glass, name sprites or the sky into opaque AO blockers.
-  const overrideVisibility = ambientOcclusion.overrideVisibility.bind(ambientOcclusion);
-  ambientOcclusion.overrideVisibility = function () {
-    overrideVisibility();
-    scene.traverse(object => {
-      if (object.isSprite || object.material?.transparent || object.material?.isShaderMaterial) object.visible = false;
-    });
-  };
-  ambientOcclusion.enabled = qualityIndex === 2;
-  composer.addPass(ambientOcclusion);
   bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.22, 0.45, 1.15);
   composer.addPass(bloom);
   // Tone mapping va sRGB konversiyasi oxirida, faqat bir marta.
@@ -271,13 +255,6 @@ sky.frustumCulled = false; scene.add(sky);
 const skyDayTop = new THREE.Color(0x779bb8), skyDayBottom = new THREE.Color(0xefd9b9);
 const skyNightTop = new THREE.Color(0x020511), skyNightBottom = new THREE.Color(0x101b30);
 const streetLights = [];
-RectAreaLightUniformsLib.init();
-const areaLights = [];
-for (const [x, z, w, h] of [[-14,-5,5,8],[1,-6,8,9],[15,-10,5,5],[12,10,5,5]]) {
-  const light = new THREE.RectAreaLight(0xffe5c5, 2.2, w, h);
-  light.position.set(x, 2.85, z); light.lookAt(x, 0, z); scene.add(light); areaLights.push(light);
-}
-
 // ---------------------------------------------------------------- navigatsiya to'ri (A* uchun)
 const CELL = 0.5, GX0 = -20, GZ0 = -14, GW = 80, GH = 56;
 const blocked = new Uint8Array(GW * GH);
@@ -1666,15 +1643,15 @@ function setQuality(index) {
   qualityIndex = index;
   const q = QUALITY[index];
   if (q.bloom) ensureComposer();
-  if (ambientOcclusion) ambientOcclusion.enabled = index === 2;
-  areaLights.forEach(light => light.visible = index === 2);
+  resetAdaptiveResolution();
   applyRealismQuality();
   if (index > 0) loadRealismAssets();
   sun.shadow.mapSize.set(q.shadow, q.shadow);
   if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
   renderer.shadowMap.needsUpdate = true; shadowElapsed = 1;
-  roomLights.forEach(l => l.visible = q.lights);
-  streetLights.forEach(l => l.visible = q.lights);
+  const roomBudget = index === 2 ? 6 : 3, streetBudget = index === 2 ? 4 : 2;
+  roomLights.forEach((light, i) => light.visible = q.lights && i % Math.ceil(roomLights.length / roomBudget) === 0);
+  streetLights.forEach((light, i) => light.visible = q.lights && i % Math.ceil(streetLights.length / streetBudget) === 0);
   parkingLabels.forEach(l => l.visible = index > 0);
   document.getElementById('bQuality').innerHTML = `Sifat: ${q.name}<kbd>Q</kbd>`;
   document.getElementById('bQuality').setAttribute('aria-label', `Grafik sifat: ${q.name}. Almashtirish`);
@@ -1714,12 +1691,36 @@ function batchFurniture() {
   }
 }
 
+// Reduce only internal pixel resolution when sustained frame times are too high.
+// Hysteresis and a startup grace period avoid resizing on individual loading spikes.
+let adaptiveScale = 1, adaptiveSeconds = 0, adaptiveFrames = 0, slowWindows = 0, adaptiveWarmup = 8;
+function resetAdaptiveResolution() {
+  adaptiveScale = 1; adaptiveSeconds = 0; adaptiveFrames = 0; slowWindows = 0; adaptiveWarmup = 8;
+}
+function adaptResolution(delta) {
+  if (document.hidden || delta <= 0 || delta > 2) {
+    adaptiveSeconds = 0; adaptiveFrames = 0; slowWindows = 0; return;
+  }
+  if (adaptiveWarmup > 0) { adaptiveWarmup -= delta; return; }
+  adaptiveSeconds += delta; adaptiveFrames++;
+  if (adaptiveSeconds < 2) return;
+  const fps = adaptiveFrames / adaptiveSeconds;
+  slowWindows = fps < 28 ? slowWindows + 1 : 0;
+  adaptiveSeconds = 0; adaptiveFrames = 0;
+  if (slowWindows >= 2 && adaptiveScale > .6) {
+    adaptiveScale = Math.max(.6, Math.round((adaptiveScale - .15) * 100) / 100);
+    slowWindows = 0; resize();
+    document.getElementById('bQuality').title = `Moslashuvchan render: ${Math.round(adaptiveScale * 100)}%. Q — sifatni almashtirish`;
+  }
+}
+
 function resize() {
   let w = innerWidth, h = innerHeight;
   if (ui.vertical) w = Math.min(w, Math.round(h * 9 / 16));
   stage.style.width = w + 'px'; stage.style.height = h + 'px';
   const q = QUALITY[qualityIndex];
   renderScale = Math.min(devicePixelRatio || 1, q.dpr, Math.sqrt(q.pixels / Math.max(1, w * h)));
+  renderScale *= adaptiveScale;
   renderer.setPixelRatio(renderScale);
   renderer.setSize(w, h);
   if (composer) { composer.setPixelRatio(renderScale); composer.setSize(w, h); }
@@ -1760,7 +1761,6 @@ function frame() {
   rim.intensity = lerp(0.65, 0.22, nightT);
   if (bloom) bloom.strength = lerp(0.22, 0.34, nightT);
   for (const l of roomLights) l.intensity = lerp(7, 17, nightT);
-  for (const light of areaLights) light.intensity = lerp(1.4, 3.2, nightT);
   for (const material of importedMaterials) material.envMapIntensity = lerp(.45, .10, nightT);
   for (const b of streetLamps) b.material.emissiveIntensity = nightT * 2;
   renderer.toneMappingExposure = lerp(1.0, 1.15, nightT);
@@ -1826,6 +1826,7 @@ function frame() {
       fpsTime = 0; fpsFrames = 0;
     }
   }
+  adaptResolution(rawDelta);
   requestAnimationFrame(frame);
 }
 function isBlockedWall(x, z) {

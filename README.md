@@ -39,14 +39,27 @@ Ofis nomi: `?nom=Mening%20Ofisim`. Sifat: `?quality=low`, `?quality=medium`,
 `?quality=high`. Birga: `?nom=Mening%20Ofisim&quality=high`.
 Boshlang'ich vaqt 17:20 — iliq yorug'lik uchun. N bilan tun/kunga o'tiladi.
 
+## Qotishni kamaytirish yangilanishi
+
+- Boshlang'ich sifat barcha ekranlarda O'rta. Keng ekran kuchli GPU degani emas.
+- Yuqori: ko'pi bilan 2.3 mln piksel (oldin 8.3 mln), 2048 soya/20 Hz (oldin 4096/60 Hz).
+- O'rta: 1.5 mln piksel, 1024 soya/15 Hz. Past: 1.1 mln piksel.
+- SSAO normal/depth passlari, area light va 4x MSAA olib tashlandi. Kontakt soyalar,
+  PBR teksturalar, GLB modellar, HDR akslar va bloom O'rta/Yuqori rejimda saqlanadi.
+- Bir vaqtda ishlaydigan nuqtaviy chiroqlar soni cheklangan; emissive lampalar qoladi.
+- 8 soniyalik boshlang'ich davrdan keyin ketma-ket ikki 2 soniyalik oynada FPS 28 dan
+  past bo'lsa, ichki render aniqligi bosqichma-bosqich 60% gacha kamayadi. UI aniqligi
+  va agentlar mantiqi o'zgarmaydi. Q bosilishi bu moslashuvni qayta boshlaydi.
+- Yashirin tab va 2 soniyadan uzun tanaffuslar moslashuv hisobiga kirmaydi.
+- Bu yukni kamaytiradi; haqiqiy FPS qurilmada o'lchanishi kerak, 60 FPS kafolati emas.
+
 ## Realism yangilanishi
 
 - Poly Haven yog'och rang/normal/roughness xaritalari; kiyim va yumshoq mebellarga
   mato normal/roughness xaritalari. Rang xaritasi sRGB, data xaritalari linear.
 - Haqiqiy HDR panoramadan PMREM akslari. HDR faqat yoritish/aks uchun;
   tashqaridagi gradient osmon va kun/tun almashishi saqlanadi.
-- Yuqori rejimda 16 namunali SSAO (shaffof shisha va yozuvlarni hisoblamaydi),
-  to'rtta keng area light, HDR postprocessing va WebGL2 MSAA.
+- HDR postprocessing va bloom; og'ir SSAO/area light/MSAA keyingi optimizatsiyada olib tashlangan.
 - 24 personaj uchun birgalikda ishlatiladigan, silliq jag', burun, qovoq, quloq va
   lab detallari bor original GLB bosh. Bosh avvalgi animatsiya bo'g'iniga ulanadi;
   soch, aksessuar, kiyim rangi va agent shaxsi saqlanadi. To'liq humanoid skelet
@@ -87,10 +100,10 @@ Boshlang'ich vaqt 17:20 — iliq yorug'lik uchun. N bilan tun/kunga o'tiladi.
 | Rejim | Piksel chegarasi | Soya | Qo'shimcha grafika |
 |---|---|---|---|
 | Past | 1x gacha, 1.1 mln | 1024; 20 Hz | Procedural material/model; bloom, SSAO, area light o'chiq |
-| O'rta | 1.25x gacha, 2.3 mln | 2048; 30 Hz | PBR, HDR, GLB, bloom; SSAO/area light o'chiq |
-| Yuqori | 2x gacha, 8.3 mln | 4096; 60 Hz | PBR, HDR, GLB, bloom, SSAO va area light |
+| O'rta | 1x gacha, 1.5 mln | 1024; 15 Hz | PBR, HDR, GLB, bloom |
+| Yuqori | 1.25x gacha, 2.3 mln | 2048; 20 Hz | PBR, HDR, GLB, bloom; ko'proq nuqtaviy chiroq |
 
-1000px dan keng oynada boshlang'ich sifat Yuqori, qolganida O'rta. URL parametri
+Boshlang'ich sifat barcha ekranlarda O'rta. URL parametri
 buni almashtiradi. Core i7 nomi videokarta kuchini bildirmaydi; GPU va VRAM ham muhim.
 
 Past rejimda parking nom lavhalari yashiriladi. Agentlar, avtomobillar va
